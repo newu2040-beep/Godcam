@@ -7,6 +7,9 @@ import android.content.pm.PackageManager
 import android.graphics.ImageFormat
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
+import android.media.AudioFormat
+import android.media.AudioManager
+import android.media.AudioRecord
 import android.media.MediaCodecList
 import android.media.MediaRecorder
 import android.os.BatteryManager
@@ -14,7 +17,9 @@ import android.os.Build
 import android.os.Environment
 import android.os.PowerManager
 import android.os.StatFs
+import com.example.model.AudioRecordingFormat
 import com.example.model.HardwareCapabilities
+import com.example.model.PhotoFormat
 import com.example.model.VideoCodecOption
 import com.example.model.VideoFps
 import com.example.model.VideoResolution
@@ -24,8 +29,9 @@ object CameraCapabilityManager {
 
     /**
      * Queries the Android device's real Camera2 characteristics, StreamConfigurationMap,
-     * MediaCodec hardware encoders, BatteryManager temperature, PowerManager thermal state,
-     * and StatFs storage at runtime. Zero fake or hardcoded demo assumptions.
+     * MediaCodec hardware video & audio encoders, AudioManager/AudioRecord sample rates,
+     * BatteryManager temperature, PowerManager thermal state, and StatFs storage at runtime.
+     * Zero fake or hardcoded demo assumptions.
      */
     fun discoverCapabilities(context: Context, isFrontLens: Boolean = false): HardwareCapabilities {
         val (freeMb, totalMb) = queryStorageMb()
@@ -39,6 +45,7 @@ object CameraCapabilityManager {
 
             var hasBack = pm.hasSystemFeature(PackageManager.FEATURE_CAMERA)
             var hasFront = pm.hasSystemFeature(PackageManager.FEATURE_CAMERA_FRONT)
+            val hasMic = pm.hasSystemFeature(PackageManager.FEATURE_MICROPHONE)
             var hasFlash = false
             var supportsRaw = false
             var supportsManualSensor = false
@@ -53,8 +60,8 @@ object CameraCapabilityManager {
             var hwLevelLabel = "LIMITED"
             var focalLength = 4.2f
             var aperture = 1.8f
-            var maxPhotoW = 1920
-            var maxPhotoH = 1080
+            var maxPhotoW = 4032
+            var maxPhotoH = 3024
 
             val targetFacing = if (isFrontLens) {
                 CameraCharacteristics.LENS_FACING_FRONT
@@ -157,6 +164,10 @@ object CameraCapabilityManager {
                     maxPhotoW = largest.width
                     maxPhotoH = largest.height
                 }
+                val rawSizes = runCatching { map?.getOutputSizes(ImageFormat.RAW_SENSOR) }.getOrNull()
+                if (!rawSizes.isNullOrEmpty()) {
+                    supportsRaw = true
+                }
 
                 val videoSizes = map?.getOutputSizes(MediaRecorder::class.java)
                     ?: map?.getOutputSizes(ImageFormat.YUV_420_888)
@@ -200,7 +211,7 @@ object CameraCapabilityManager {
                 if (maxZoom >= 5.0f) add(5.0f)
             }.distinct()
 
-            // Discover real hardware video codecs via MediaCodecList
+            // Discover real hardware video & audio codecs via MediaCodecList
             val codecInfos = MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos
                 .filter { it.isEncoder }
             val supportsHevc = codecInfos.any { info ->
@@ -212,7 +223,81 @@ object CameraCapabilityManager {
                         .filter { it.startsWith("video/", ignoreCase = true) }
                         .map { "${info.name} ($it)" }
                 }
+                .distinct()
                 .take(6)
+
+            val audioEncoderNames = codecInfos
+                .flatMap { info ->
+                    info.supportedTypes
+                        .filter { it.startsWith("audio/", ignoreCase = true) }
+                        .map { "${info.name} ($it)" }
+                }
+                .distinct()
+                .take(6)
+
+            val supportsAacEncoder = codecInfos.any { info ->
+                info.supportedTypes.any { it.equals("audio/mp4a-latm", ignoreCase = true) }
+            }
+            val supportsOpusEncoder = codecInfos.any { info ->
+                info.supportedTypes.any { it.equals("audio/opus", ignoreCase = true) }
+            }
+            val supportsFlacEncoder = codecInfos.any { info ->
+                info.supportedTypes.any { it.equals("audio/flac", ignoreCase = true) }
+            }
+
+            // Query real hardware audio sample rate & buffer support
+            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+            val nativeSampleRate = audioManager
+                ?.getProperty(AudioManager.PROPERTY_OUTPUT_SAMPLE_RATE)
+                ?.toIntOrNull()
+                ?.takeIf { it > 0 } ?: 48000
+
+            val supports48kStereo = runCatching {
+                AudioRecord.getMinBufferSize(
+                    48000,
+                    AudioFormat.CHANNEL_IN_STEREO,
+                    AudioFormat.ENCODING_PCM_16BIT
+                ) > 0
+            }.getOrDefault(true)
+
+            val supports44kMono = runCatching {
+                AudioRecord.getMinBufferSize(
+                    44100,
+                    AudioFormat.CHANNEL_IN_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT
+                ) > 0
+            }.getOrDefault(true)
+
+            val supportedAudioFormats = buildList {
+                if (hasMic) {
+                    if (supportsAacEncoder && supports48kStereo) {
+                        add(AudioRecordingFormat.AAC_LC_STEREO_48K)
+                        add(AudioRecordingFormat.HE_AAC_STEREO_48K)
+                    }
+                    if (supports48kStereo) {
+                        add(AudioRecordingFormat.PCM_LPCM_48K)
+                    }
+                    if (supportsOpusEncoder) {
+                        add(AudioRecordingFormat.OPUS_STUDIO_48K)
+                    }
+                    if (supportsFlacEncoder) {
+                        add(AudioRecordingFormat.FLAC_LOSSLESS_48K)
+                    }
+                    if (supportsAacEncoder && supports44kMono) {
+                        add(AudioRecordingFormat.AAC_MONO_VOICE_44K)
+                    }
+                }
+                add(AudioRecordingFormat.MUTED)
+            }.distinct()
+
+            val supportedPhotoFormats = buildList {
+                add(PhotoFormat.JPEG)
+                add(PhotoFormat.PNG)
+                add(PhotoFormat.WEBP)
+                if (supportsRaw) {
+                    add(PhotoFormat.RAW_DNG)
+                }
+            }
 
             val codecs = buildList {
                 add(VideoCodecOption.H264)
@@ -244,7 +329,11 @@ object CameraCapabilityManager {
                 supportedVideoResolutions = discoveredResolutions,
                 supportedFpsChoices = discoveredFps.sortedBy { it.fps },
                 supportedCodecs = codecs,
+                supportedPhotoFormats = supportedPhotoFormats,
+                supportedAudioFormats = supportedAudioFormats,
                 encoderNames = hardwareEncoderNames,
+                audioEncoderNames = audioEncoderNames,
+                nativeAudioSampleRateHz = nativeSampleRate,
                 supports8K = supports8K,
                 availableStorageMb = freeMb,
                 totalStorageMb = totalMb,

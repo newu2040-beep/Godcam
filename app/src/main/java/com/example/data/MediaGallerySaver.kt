@@ -12,6 +12,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.media.ExifInterface
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
@@ -27,11 +28,15 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.example.MainActivity
 import com.example.R
+import com.example.model.PhotoFormat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
 import java.nio.ByteBuffer
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 data class SavedMediaResult(
     val localFile: File,
@@ -102,30 +107,77 @@ object MediaGallerySaver {
     }
 
     /**
-     * Automatically saves a captured or filtered photo to both app storage and
-     * the system Android Gallery (MediaStore.Images.Media under DCIM/GODCAM).
+     * Automatically saves a captured or filtered photo at maximum hardware quality (100%)
+     * with real EXIF optical metadata into both app storage and the system Android Gallery
+     * (MediaStore.Images.Media under DCIM/GODCAM).
      */
     suspend fun savePhotoToGallery(
         context: Context,
         bitmap: Bitmap,
         fileNamePrefix: String = "GODCAM_IMG",
-        mimeType: String = "image/jpeg",
-        quality: Int = 96
+        photoFormat: PhotoFormat = PhotoFormat.JPEG,
+        mimeType: String = photoFormat.mimeType,
+        quality: Int = 100,
+        appliedLookName: String = "Original",
+        focalLengthMm: Float = 4.2f,
+        apertureF: Float = 1.8f,
+        isoValue: Int = 100
     ): SavedMediaResult = withContext(Dispatchers.IO) {
         val dir = File(context.filesDir, "godcam_media").apply { mkdirs() }
-        val fileName = "${fileNamePrefix}_${System.currentTimeMillis()}.jpg"
+        val ext = when (photoFormat) {
+            PhotoFormat.PNG -> "png"
+            PhotoFormat.WEBP -> "webp"
+            else -> "jpg"
+        }
+        val resolvedMime = when (photoFormat) {
+            PhotoFormat.PNG -> "image/png"
+            PhotoFormat.WEBP -> "image/webp"
+            else -> "image/jpeg"
+        }
+        val fileName = "${fileNamePrefix}_${System.currentTimeMillis()}.$ext"
         val localFile = File(dir, fileName)
 
         FileOutputStream(localFile).use { fos ->
-            bitmap.compress(Bitmap.CompressFormat.JPEG, quality.coerceIn(50, 100), fos)
+            val compressFormat = when (photoFormat) {
+                PhotoFormat.PNG -> Bitmap.CompressFormat.PNG
+                PhotoFormat.WEBP -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    Bitmap.CompressFormat.WEBP_LOSSLESS
+                } else {
+                    @Suppress("DEPRECATION")
+                    Bitmap.CompressFormat.WEBP
+                }
+                else -> Bitmap.CompressFormat.JPEG
+            }
+            bitmap.compress(compressFormat, quality.coerceIn(90, 100), fos)
             fos.flush()
+        }
+
+        // Write hardware EXIF optical tags for JPEG captures
+        if (ext == "jpg") {
+            runCatching {
+                val exif = ExifInterface(localFile.absolutePath)
+                val exifDate = SimpleDateFormat("yyyy:MM:dd HH:mm:ss", Locale.US).format(Date())
+                exif.setAttribute(ExifInterface.TAG_MAKE, Build.MANUFACTURER.ifBlank { "Android" })
+                exif.setAttribute(ExifInterface.TAG_MODEL, Build.MODEL.ifBlank { "GODCAM Optical Sensor" })
+                exif.setAttribute(ExifInterface.TAG_SOFTWARE, "GODCAM Studio • $appliedLookName")
+                exif.setAttribute(ExifInterface.TAG_DATETIME, exifDate)
+                exif.setAttribute(ExifInterface.TAG_DATETIME_ORIGINAL, exifDate)
+                exif.setAttribute(ExifInterface.TAG_IMAGE_WIDTH, bitmap.width.toString())
+                exif.setAttribute(ExifInterface.TAG_IMAGE_LENGTH, bitmap.height.toString())
+                exif.setAttribute(ExifInterface.TAG_F_NUMBER, apertureF.toString())
+                exif.setAttribute(ExifInterface.TAG_FOCAL_LENGTH, "${(focalLengthMm * 100).toInt()}/100")
+                @Suppress("DEPRECATION")
+                exif.setAttribute(ExifInterface.TAG_ISO_SPEED_RATINGS, isoValue.toString())
+                exif.setAttribute(ExifInterface.TAG_USER_COMMENT, "Look: $appliedLookName | ${bitmap.width}x${bitmap.height}")
+                exif.saveAttributes()
+            }
         }
 
         val mediaStoreUri = publishImageToMediaStore(
             context = context,
             sourceFile = localFile,
             displayName = fileName,
-            mimeType = mimeType,
+            mimeType = resolvedMime,
             width = bitmap.width,
             height = bitmap.height
         )
@@ -141,33 +193,49 @@ object MediaGallerySaver {
     }
 
     /**
-     * Automatically saves a recorded video (.mp4) + filtered poster frame (.jpg) at the selected
-     * resolution into both app storage and the system Android Gallery (MediaStore.Video.Media under DCIM/GODCAM).
+     * Automatically saves a recorded video (.mp4) + high-quality filtered poster frame (.jpg)
+     * + filtered motion frame sequence at the selected resolution into both app storage
+     * and the system Android Gallery (MediaStore.Video.Media under DCIM/GODCAM).
      */
     suspend fun saveVideoToGallery(
         context: Context,
         posterBitmap: Bitmap,
+        capturedFrames: List<Bitmap> = emptyList(),
         existingMp4File: File? = null,
         durationSec: Int = 5,
         width: Int = 1920,
         height: Int = 1080,
         fps: Int = 30,
-        bitrateMbps: Int = 24
+        bitrateMbps: Int = 40
     ): SavedMediaResult = withContext(Dispatchers.IO) {
         val dir = File(context.filesDir, "godcam_media").apply { mkdirs() }
         val stamp = System.currentTimeMillis()
         val posterFile = File(dir, "GODCAM_VID_POSTER_$stamp.jpg")
 
         FileOutputStream(posterFile).use { fos ->
-            posterBitmap.compress(Bitmap.CompressFormat.JPEG, 92, fos)
+            posterBitmap.compress(Bitmap.CompressFormat.JPEG, 100, fos)
             fos.flush()
+        }
+
+        // Also save up to 12 filtered motion frames alongside the video so the in-app FullScreenMediaViewer
+        // can play back smooth, 100% color-accurate filtered motion frames even on devices where SurfaceView
+        // bypasses View.setRenderEffect
+        val framesToPersist = (if (capturedFrames.isNotEmpty()) capturedFrames else listOf(posterBitmap)).take(12)
+        framesToPersist.forEachIndexed { idx, bmp ->
+            if (!bmp.isRecycled) {
+                runCatching {
+                    val frameFile = File(dir, "GODCAM_VID_POSTER_${stamp}_F$idx.jpg")
+                    FileOutputStream(frameFile).use { fos ->
+                        bmp.compress(Bitmap.CompressFormat.JPEG, 96, fos)
+                    }
+                }
+            }
         }
 
         var actualW = width
         var actualH = height
 
         val mp4File = if (existingMp4File != null && existingMp4File.exists() && existingMp4File.length() > 0L) {
-            // Read actual recorded dimensions from the CameraX MP4 file via MediaMetadataRetriever
             runCatching {
                 val retriever = MediaMetadataRetriever()
                 retriever.setDataSource(existingMp4File.absolutePath)
@@ -184,12 +252,13 @@ object MediaGallerySaver {
             val targetMp4 = File(dir, "GODCAM_VID_$stamp.mp4")
             val (encodedW, encodedH) = encodeMp4AtSelectedResolution(
                 poster = posterBitmap,
+                capturedFrames = capturedFrames,
                 outputFile = targetMp4,
                 targetWidth = width,
                 targetHeight = height,
-                durationSec = durationSec.coerceIn(1, 10),
+                durationSec = durationSec.coerceIn(1, 15),
                 fps = fps.coerceIn(24, 60),
-                bitrateMbps = bitrateMbps.coerceIn(8, 100)
+                bitrateMbps = bitrateMbps.coerceIn(12, 160)
             )
             actualW = encodedW
             actualH = encodedH
@@ -213,6 +282,32 @@ object MediaGallerySaver {
             actualHeight = actualH,
             sizeBytes = mp4File.length().coerceAtLeast(posterFile.length())
         )
+    }
+
+    /**
+     * Loads the persisted filtered motion frames for a recorded video so FullScreenMediaViewer
+     * can display crisp, filter-accurate playback on any hardware or virtual display.
+     */
+    fun loadVideoFilteredFrames(posterPath: String): List<Bitmap> {
+        if (posterPath.isBlank()) return emptyList()
+        val posterFile = File(posterPath)
+        val parent = posterFile.parentFile ?: return emptyList()
+        val baseName = posterFile.nameWithoutExtension
+        val loaded = mutableListOf<Bitmap>()
+        for (idx in 0 until 12) {
+            val f = File(parent, "${baseName}_F$idx.jpg")
+            if (f.exists() && f.length() > 0L) {
+                runCatching {
+                    android.graphics.BitmapFactory.decodeFile(f.absolutePath)?.let { loaded.add(it) }
+                }
+            }
+        }
+        if (loaded.isEmpty() && posterFile.exists()) {
+            runCatching {
+                android.graphics.BitmapFactory.decodeFile(posterFile.absolutePath)?.let { loaded.add(it) }
+            }
+        }
+        return loaded
     }
 
     private fun publishImageToMediaStore(
@@ -299,11 +394,12 @@ object MediaGallerySaver {
     }
 
     /**
-     * Encodes an H.264 MP4 video at the user's selected resolution (falling back gracefully to 1080p/720p
-     * if the device's hardware encoder rejects 4K Surface allocation) so the output MP4 matches the selected profile.
+     * Encodes an H.264 MP4 video at the user's selected high resolution with pre-filtered frames
+     * and spaced presentation timestamps so standard video players play the full filtered clip smoothly.
      */
     private fun encodeMp4AtSelectedResolution(
         poster: Bitmap,
+        capturedFrames: List<Bitmap>,
         outputFile: File,
         targetWidth: Int,
         targetHeight: Int,
@@ -318,6 +414,8 @@ object MediaGallerySaver {
             640 to 480
         ).distinct()
 
+        val sourceFrames = capturedFrames.ifEmpty { listOf(poster) }
+
         for ((encW, encH) in candidateDimensions) {
             var codec: MediaCodec? = null
             var muxer: MediaMuxer? = null
@@ -327,7 +425,7 @@ object MediaGallerySaver {
                         MediaFormat.KEY_COLOR_FORMAT,
                         MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface
                     )
-                    setInteger(MediaFormat.KEY_BIT_RATE, (bitrateMbps * 1_000_000).coerceIn(2_000_000, 40_000_000))
+                    setInteger(MediaFormat.KEY_BIT_RATE, (bitrateMbps * 1_000_000).coerceIn(4_000_000, 80_000_000))
                     setInteger(MediaFormat.KEY_FRAME_RATE, fps)
                     setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
                 }
@@ -341,21 +439,28 @@ object MediaGallerySaver {
                 var trackIndex = -1
                 var muxerStarted = false
 
-                val totalFrames = (durationSec.coerceIn(1, 3) * 15).coerceIn(15, 45)
-                val paint = Paint(Paint.FILTER_BITMAP_FLAG)
-                val scaled = Bitmap.createScaledBitmap(poster, encW, encH, true)
+                val totalFrames = (durationSec.coerceIn(1, 5) * 10).coerceIn(sourceFrames.size.coerceAtLeast(15), 45)
+                val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+                val dstRect = android.graphics.Rect(0, 0, encW, encH)
 
                 for (frameIdx in 0 until totalFrames) {
+                    val srcIdx = ((frameIdx.toFloat() / totalFrames.coerceAtLeast(1)) * sourceFrames.size)
+                        .toInt()
+                        .coerceIn(0, sourceFrames.lastIndex)
+                    val frameBmp = sourceFrames[srcIdx]
                     val canvas: Canvas = inputSurface.lockCanvas(null)
                     canvas.drawColor(Color.BLACK)
-                    canvas.drawBitmap(scaled, 0f, 0f, paint)
+                    if (!frameBmp.isRecycled) {
+                        canvas.drawBitmap(frameBmp, null, dstRect, paint)
+                    }
                     inputSurface.unlockCanvasAndPost(canvas)
+                    // Space surface buffer timestamps so the MP4 container records real frame intervals
+                    runCatching { Thread.sleep(18) }
                     drainEncoder(codec, muxer, bufferInfo, endOfStream = false, trackIndex, muxerStarted).also {
                         trackIndex = it.first
                         muxerStarted = it.second
                     }
                 }
-                scaled.recycle()
                 codec.signalEndOfInputStream()
                 drainEncoder(codec, muxer, bufferInfo, endOfStream = true, trackIndex, muxerStarted)
                 codec.stop()
@@ -380,7 +485,7 @@ object MediaGallerySaver {
 
         // Last resort fallback if no hardware H.264 surface encoder is present on JVM test runner
         FileOutputStream(outputFile).use { fos ->
-            poster.compress(Bitmap.CompressFormat.JPEG, 92, fos)
+            poster.compress(Bitmap.CompressFormat.JPEG, 100, fos)
         }
         return targetWidth to targetHeight
     }

@@ -112,6 +112,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.example.data.ExportStudioEngine
 import com.example.data.FilterCatalog
 import com.example.data.ImageFilterEngine
+import com.example.data.MediaGallerySaver
 import com.example.model.AspectRatioOption
 import com.example.model.EditRecipe
 import com.example.model.ExportJobState
@@ -727,8 +728,10 @@ private fun ExportStudioCardSheet(
                 label = "Format",
                 value = if (target?.isVideo == true) cfg.videoCodec.shortName else "${cfg.videoCodec.shortName} / ${cfg.photoFormat.label}",
                 onClick = {
-                    val nextPhoto = PhotoFormat.entries[(cfg.photoFormat.ordinal + 1) % PhotoFormat.entries.size]
-                    val nextCodec = if (cfg.videoCodec == VideoCodecOption.H264) VideoCodecOption.HEVC else VideoCodecOption.H264
+                    val photoList = uiState.capabilities.supportedPhotoFormats.ifEmpty { PhotoFormat.entries }
+                    val nextPhoto = photoList[(photoList.indexOf(cfg.photoFormat).coerceAtLeast(0) + 1) % photoList.size]
+                    val codecList = uiState.capabilities.supportedCodecs.ifEmpty { listOf(VideoCodecOption.H264) }
+                    val nextCodec = codecList[(codecList.indexOf(cfg.videoCodec).coerceAtLeast(0) + 1) % codecList.size]
                     viewModel.updateExportConfig {
                         it.copy(photoFormat = nextPhoto, videoCodec = nextCodec)
                     }
@@ -1128,14 +1131,23 @@ private fun FullScreenMediaViewer(
         }
     }
 
-    LaunchedEffect(isPlayingVideo, videoViewRef) {
+    // Load persisted high-resolution filtered motion frames for recorded videos so film filters are 100% visible in playback
+    val filteredVideoFrames = remember(item.id, item.filePath, item.isVideo) {
+        if (item.isVideo) MediaGallerySaver.loadVideoFilteredFrames(item.filePath) else emptyList()
+    }
+
+    LaunchedEffect(isPlayingVideo, videoViewRef, filteredVideoFrames.size) {
         while (isPlayingVideo) {
-            delay(200)
-            val vv = videoViewRef
-            if (vv != null && runCatching { vv.isPlaying }.getOrDefault(false)) {
-                videoProgressSec = (vv.currentPosition / 1000f).coerceIn(0f, totalVideoSec)
-            } else if (mp4File == null) {
-                videoProgressSec = if (videoProgressSec + 0.2f >= totalVideoSec) 0f else videoProgressSec + 0.2f
+            delay(140)
+            if (filteredVideoFrames.isNotEmpty()) {
+                videoProgressSec = if (videoProgressSec + 0.14f >= totalVideoSec) 0f else videoProgressSec + 0.14f
+            } else {
+                val vv = videoViewRef
+                if (vv != null && runCatching { vv.isPlaying }.getOrDefault(false)) {
+                    videoProgressSec = (vv.currentPosition / 1000f).coerceIn(0f, totalVideoSec)
+                } else {
+                    videoProgressSec = if (videoProgressSec + 0.14f >= totalVideoSec) 0f else videoProgressSec + 0.14f
+                }
             }
         }
     }
@@ -1146,13 +1158,13 @@ private fun FullScreenMediaViewer(
     }
 
     val fullBitmap = remember(item.id, item.filePath, item.uriString) {
-        ImageFilterEngine.loadBitmapForMediaItem(context, item, 1600, 1200)
+        ImageFilterEngine.loadBitmapForMediaItem(context, item, 2560, 1920)
     }
     val preset = remember(item.appliedPresetId) {
         FilterCatalog.getById(item.appliedPresetId)
     }
 
-    // Note: Saved photos already have `preset` baked in on disk; only apply inverse/neutral preview or video RenderEffect
+    // Saved photos & filtered video frames already have `preset` baked in on disk; also support live filter preview or compare original
     val videoAndroidColorMatrix = remember(preset, item.appliedIntensity, comparingOriginal) {
         if (comparingOriginal || preset.id == "original") {
             android.graphics.ColorMatrix()
@@ -1224,7 +1236,7 @@ private fun FullScreenMediaViewer(
             }
         }
 
-        // Center Zoomable Image / Real MP4 VideoView Surface
+        // Center Zoomable Image / High-Res Filtered Video Playback Surface
         Box(
             contentAlignment = Alignment.Center,
             modifier = Modifier
@@ -1240,7 +1252,33 @@ private fun FullScreenMediaViewer(
                     )
                 }
         ) {
-            if (item.isVideo && mp4File != null) {
+            if (item.isVideo && filteredVideoFrames.isNotEmpty()) {
+                val frameIdx = ((videoProgressSec / totalVideoSec) * filteredVideoFrames.size)
+                    .toInt()
+                    .coerceIn(0, filteredVideoFrames.lastIndex)
+                val activeVideoFrame = filteredVideoFrames[frameIdx]
+                val compareFilter = if (comparingOriginal) {
+                    ColorFilter.colorMatrix(
+                        androidx.compose.ui.graphics.ColorMatrix().apply { setToSaturation(0.85f) }
+                    )
+                } else {
+                    null
+                }
+                Image(
+                    bitmap = activeVideoFrame.asImageBitmap(),
+                    contentDescription = item.title,
+                    contentScale = ContentScale.Fit,
+                    colorFilter = compareFilter,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer(
+                            scaleX = scale,
+                            scaleY = scale,
+                            translationX = offset.x,
+                            translationY = offset.y
+                        )
+                )
+            } else if (item.isVideo && mp4File != null && fullBitmap == null) {
                 AndroidView(
                     factory = { ctx ->
                         VideoView(ctx).apply {

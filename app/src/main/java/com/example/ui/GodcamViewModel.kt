@@ -24,9 +24,11 @@ import com.example.data.FilterCatalog
 import com.example.data.GodcamRepository
 import com.example.data.ImageFilterEngine
 import com.example.data.MediaGallerySaver
+import com.example.data.ShutterSoundEngine
 import com.example.data.UserPreferencesState
 import com.example.model.AppThemeOption
 import com.example.model.AspectRatioOption
+import com.example.model.AudioRecordingFormat
 import com.example.model.CaptureMode
 import com.example.model.ColorProfileOption
 import com.example.model.EditRecipe
@@ -42,6 +44,7 @@ import com.example.model.HardwareCapabilities
 import com.example.model.MediaItemModel
 import com.example.model.MeteringModeOption
 import com.example.model.PhotoFormat
+import com.example.model.ShutterSoundStyle
 import com.example.model.StabilizationMode
 import com.example.model.TimerOption
 import com.example.model.VideoCodecOption
@@ -97,6 +100,8 @@ data class CameraUiState(
     val countdownRemainingSec: Int = 0,
     val aspectRatio: AspectRatioOption = AspectRatioOption.RATIO_4_3,
     val photoFormat: PhotoFormat = PhotoFormat.JPEG,
+    val shutterSoundStyle: ShutterSoundStyle = ShutterSoundStyle.FUJI_MECHANICAL,
+    val audioRecordingFormat: AudioRecordingFormat = AudioRecordingFormat.AAC_LC_STEREO_48K,
     // Manual / Pro Photo & Video settings
     val isAutoIso: Boolean = true,
     val manualIso: Int = 100,
@@ -184,6 +189,7 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
     private var timerJob: Job? = null
     private var recordingJob: Job? = null
     private var exportJob: Job? = null
+    private var lastNonSilentShutterStyle: ShutterSoundStyle = ShutterSoundStyle.FUJI_MECHANICAL
 
     init {
         MediaGallerySaver.ensureNotificationChannel(application)
@@ -198,11 +204,22 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
         }
         viewModelScope.launch {
             repository.preferencesFlow.collect { prefs ->
+                if (prefs.shutterSoundStyle != ShutterSoundStyle.OFF) {
+                    lastNonSilentShutterStyle = prefs.shutterSoundStyle
+                }
                 _uiState.update { state ->
+                    val validAudio = if (prefs.audioRecordingFormat in state.capabilities.supportedAudioFormats) {
+                        prefs.audioRecordingFormat
+                    } else {
+                        state.capabilities.supportedAudioFormats.firstOrNull() ?: AudioRecordingFormat.AAC_LC_STEREO_48K
+                    }
                     state.copy(
                         gridMode = prefs.defaultGrid,
                         aspectRatio = prefs.defaultRatio,
-                        photoFormat = prefs.defaultPhotoFormat
+                        photoFormat = prefs.defaultPhotoFormat,
+                        shutterSoundStyle = prefs.shutterSoundStyle,
+                        audioRecordingFormat = validAudio,
+                        audioMuted = validAudio == AudioRecordingFormat.MUTED
                     )
                 }
             }
@@ -257,10 +274,15 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
             val maxBitrate = caps.maxBitrateMbpsFor(resolvedRes, current.videoCodec)
             val resolvedBitrate = current.videoBitrateMbps.coerceIn(8, maxBitrate)
             val resolvedFlash = if (!caps.hasFlashUnit) FlashModeOption.OFF else current.flashMode
-            val resolvedFormat = if (current.photoFormat == PhotoFormat.RAW_DNG && !caps.supportsRawCapture) {
-                PhotoFormat.JPEG
+            val resolvedFormat = if (current.photoFormat !in caps.supportedPhotoFormats) {
+                caps.supportedPhotoFormats.firstOrNull() ?: PhotoFormat.JPEG
             } else {
                 current.photoFormat
+            }
+            val resolvedAudio = if (current.audioRecordingFormat in caps.supportedAudioFormats) {
+                current.audioRecordingFormat
+            } else {
+                caps.supportedAudioFormats.firstOrNull() ?: AudioRecordingFormat.AAC_LC_STEREO_48K
             }
             current.copy(
                 capabilities = caps,
@@ -268,7 +290,9 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
                 videoFps = resolvedFps,
                 videoBitrateMbps = resolvedBitrate,
                 flashMode = resolvedFlash,
-                photoFormat = resolvedFormat
+                photoFormat = resolvedFormat,
+                audioRecordingFormat = resolvedAudio,
+                audioMuted = resolvedAudio == AudioRecordingFormat.MUTED
             )
         }
     }
@@ -294,12 +318,13 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
     }
 
     fun toggleLiveFilterStrip() {
+        triggerHaptic()
         _uiState.update { it.copy(showLiveFilterStrip = !it.showLiveFilterStrip) }
     }
 
     fun refreshHardwareTelemetryNow() {
         refreshCapabilities()
-        showBanner("Hardware telemetry refreshed from Camera2, MediaCodec & BatteryManager")
+        showBanner("Hardware telemetry refreshed from Camera2, MediaCodec, AudioManager & BatteryManager")
     }
 
     suspend fun runCountdownTimerIfNeeded(): Boolean {
@@ -313,6 +338,10 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
         for (sec in timerSec downTo 1) {
             _uiState.update { it.copy(countdownRemainingSec = sec) }
             triggerHaptic()
+            ShutterSoundEngine.playTimerCountdownTick(
+                style = _uiState.value.shutterSoundStyle,
+                isFinalSecond = (sec == 1)
+            )
             delay(1000)
         }
         _uiState.update { it.copy(countdownRemainingSec = 0) }
@@ -590,6 +619,7 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
     }
 
     fun setStabilization(mode: StabilizationMode) {
+        triggerHaptic()
         _uiState.update {
             it.copy(
                 stabilizationMode = mode,
@@ -598,13 +628,63 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
         }
     }
 
-    fun toggleAudioMute() {
+    fun setShutterSoundStyle(style: ShutterSoundStyle, playPreview: Boolean = true) {
+        triggerHaptic()
+        if (style != ShutterSoundStyle.OFF) {
+            lastNonSilentShutterStyle = style
+        }
         _uiState.update {
-            val next = !it.audioMuted
             it.copy(
-                audioMuted = next,
-                statusBannerMessage = if (next) "Microphone Muted (Silent Video)" else "Stereo Audio Active"
+                shutterSoundStyle = style,
+                statusBannerMessage = "Shutter Sound: ${style.label} — ${style.description}"
             )
+        }
+        if (playPreview && style != ShutterSoundStyle.OFF) {
+            ShutterSoundEngine.playShutterSound(style)
+        }
+        viewModelScope.launch {
+            repository.setShutterSoundStyle(style)
+        }
+    }
+
+    fun toggleShutterSoundOnOff() {
+        val current = _uiState.value.shutterSoundStyle
+        val next = if (current == ShutterSoundStyle.OFF) {
+            lastNonSilentShutterStyle.takeIf { it != ShutterSoundStyle.OFF } ?: ShutterSoundStyle.FUJI_MECHANICAL
+        } else {
+            ShutterSoundStyle.OFF
+        }
+        setShutterSoundStyle(next, playPreview = next != ShutterSoundStyle.OFF)
+    }
+
+    fun setAudioRecordingFormat(format: AudioRecordingFormat) {
+        val supported = _uiState.value.capabilities.supportedAudioFormats
+        if (format !in supported) {
+            showBanner("${format.label} is not supported by this device's hardware audio encoder.")
+            return
+        }
+        triggerHaptic()
+        _uiState.update {
+            it.copy(
+                audioRecordingFormat = format,
+                audioMuted = (format == AudioRecordingFormat.MUTED),
+                statusBannerMessage = "Video Audio Format: ${format.label} (${format.specsLabel})"
+            )
+        }
+        viewModelScope.launch {
+            repository.setAudioRecordingFormat(format)
+        }
+    }
+
+    fun toggleAudioMute() {
+        val current = _uiState.value
+        if (current.audioMuted) {
+            val firstActive = current.capabilities.supportedAudioFormats
+                .firstOrNull { it != AudioRecordingFormat.MUTED }
+                ?: AudioRecordingFormat.AAC_LC_STEREO_48K
+            setAudioRecordingFormat(firstActive)
+        } else {
+            setAudioRecordingFormat(AudioRecordingFormat.MUTED)
         }
     }
 
@@ -682,7 +762,7 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
     }
 
     /**
-     * Saves the currently previewed look to the System Gallery (DCIM/GODCAM) and in-app Gallery.
+     * Saves the currently previewed look to the System Gallery (DCIM/GODCAM) and in-app Gallery at 100% quality.
      */
     fun applyFilterAndSave(previewBitmap: Bitmap? = null) {
         triggerHaptic()
@@ -702,7 +782,7 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
 
         viewModelScope.launch {
             val src = previewBitmap
-                ?: ImageFilterEngine.loadBitmapForMediaItem(getApplication(), activeMedia, 1920, 1440)
+                ?: ImageFilterEngine.loadBitmapForMediaItem(getApplication(), activeMedia, 2560, 1920)
                 ?: _latestCameraFrame.value
 
             if (src == null) {
@@ -710,6 +790,54 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
                     it.copy(
                         destination = AppDestination.CAMERA,
                         statusBannerMessage = "Active Look set to ${preset.name}"
+                    )
+                }
+                return@launch
+            }
+
+            // If editing a recorded Video in FiltersScreen, update its look AND re-render its filtered frames
+            if (activeMedia != null && activeMedia.isVideo) {
+                val renderedPoster = ImageFilterEngine.renderFilteredBitmap(
+                    source = src,
+                    preset = preset,
+                    recipe = state.activeRecipe,
+                    targetWidth = activeMedia.width.coerceAtLeast(1280),
+                    targetHeight = activeMedia.height.coerceAtLeast(720),
+                    applyCrop = false,
+                    extraEv = state.exposureEv
+                )
+                val savedVideo = MediaGallerySaver.saveVideoToGallery(
+                    context = getApplication(),
+                    posterBitmap = renderedPoster,
+                    capturedFrames = listOf(renderedPoster),
+                    existingMp4File = null,
+                    durationSec = activeMedia.durationSec.coerceAtLeast(3),
+                    width = activeMedia.width.coerceAtLeast(1280),
+                    height = activeMedia.height.coerceAtLeast(720),
+                    fps = state.videoFps.fps,
+                    bitrateMbps = state.videoBitrateMbps
+                )
+                renderedPoster.recycle()
+
+                val title = "${activeMedia.title} • ${preset.name}"
+                repository.insertCapturedOrExportedMedia(
+                    title = title,
+                    filePath = savedVideo.posterFile.absolutePath,
+                    uriString = savedVideo.localFile.absolutePath,
+                    isVideo = true,
+                    width = savedVideo.actualWidth,
+                    height = savedVideo.actualHeight,
+                    durationSec = activeMedia.durationSec.coerceAtLeast(3),
+                    formatLabel = activeMedia.formatLabel,
+                    sizeBytes = savedVideo.sizeBytes,
+                    appliedPresetId = preset.id,
+                    appliedIntensity = state.activeRecipe.intensity,
+                    cameraInfo = "${savedVideo.actualWidth}×${savedVideo.actualHeight} • ${state.videoFps.fps}fps • ${preset.name}"
+                )
+                _uiState.update {
+                    it.copy(
+                        destination = AppDestination.GALLERY,
+                        statusBannerMessage = "Saved Filtered Video ($title) to Gallery"
                     )
                 }
                 return@launch
@@ -726,7 +854,13 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
             val savedResult = MediaGallerySaver.savePhotoToGallery(
                 context = getApplication(),
                 bitmap = rendered,
-                fileNamePrefix = "GODCAM_LOOK_${preset.id.uppercase(Locale.US)}"
+                fileNamePrefix = "GODCAM_LOOK_${preset.id.uppercase(Locale.US)}",
+                photoFormat = state.photoFormat,
+                quality = 100,
+                appliedLookName = preset.name,
+                focalLengthMm = state.capabilities.focalLengthMm,
+                apertureF = state.capabilities.apertureF,
+                isoValue = if (state.isAutoIso) 100 else state.manualIso
             )
             rendered.recycle()
 
@@ -755,21 +889,23 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
             _uiState.update {
                 it.copy(
                     destination = if (activeMedia != null) AppDestination.GALLERY else AppDestination.CAMERA,
-                    statusBannerMessage = "Saved $title to Gallery"
+                    statusBannerMessage = "Saved $title (${savedResult.actualWidth}×${savedResult.actualHeight}) to Gallery"
                 )
             }
         }
     }
 
     /**
-     * Processes a captured raw photo [Bitmap] from CameraX ImageCapture / PreviewView,
-     * applies the active FilterPreset + EditRecipe + Exposure EV, and saves it automatically
+     * Processes a captured raw photo [Bitmap] from CameraX ImageCapture (MAXIMIZE_QUALITY) / PreviewView,
+     * plays the active Fuji / Digital Camera shutter sound, applies the active FilterPreset + EditRecipe + Exposure EV
+     * at full hardware sensor resolution, and saves it automatically at 100% quality with EXIF tags
      * into both System Gallery (DCIM/GODCAM) and GODCAM Gallery.
      */
     fun processAndSaveCapturedPhoto(rawBitmap: Bitmap?) {
         if (_uiState.value.isCapturing) return
-        triggerHaptic()
         val state = _uiState.value
+        triggerHaptic()
+        ShutterSoundEngine.playShutterSound(state.shutterSoundStyle)
 
         val sourceBitmap = rawBitmap ?: _latestCameraFrame.value
         if (sourceBitmap == null) {
@@ -780,18 +916,36 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
         viewModelScope.launch {
             _uiState.update { it.copy(isCapturing = true, shutterFlashVisible = true) }
             if (state.nightModeActive) {
-                _uiState.update { it.copy(statusBannerMessage = "Night Mode: Processing low-light frame…") }
-                delay(280)
+                _uiState.update { it.copy(statusBannerMessage = "Night Mode: Stacking high-dynamic-range frame…") }
+                delay(240)
             } else {
-                delay(90)
+                delay(85)
             }
             _uiState.update { it.copy(shutterFlashVisible = false) }
 
             val preset = FilterCatalog.getById(state.activeRecipe.presetId)
+
+            // Compute high-resolution hardware output dimensions matching the selected aspect ratio
+            val sensorMaxW = state.capabilities.maxPhotoWidth.coerceIn(1920, 4032)
+            val sensorMaxH = state.capabilities.maxPhotoHeight.coerceIn(1080, 3024)
+            val maxLongEdge = maxOf(sensorMaxW, sensorMaxH, sourceBitmap.width, sourceBitmap.height).coerceIn(1920, 3840)
+            val ratioVal = state.aspectRatio.aspectValue
+            val (highResW, highResH) = if (ratioVal >= 1f) {
+                val w = maxLongEdge
+                val h = (w / ratioVal).roundToInt().coerceAtLeast(480)
+                w to h
+            } else {
+                val h = maxLongEdge
+                val w = (h * ratioVal).roundToInt().coerceAtLeast(480)
+                w to h
+            }
+
             val filtered = ImageFilterEngine.renderFilteredBitmap(
                 source = sourceBitmap,
                 preset = preset,
                 recipe = state.activeRecipe.copy(aspectRatio = state.aspectRatio),
+                targetWidth = highResW,
+                targetHeight = highResH,
                 applyCrop = true,
                 extraEv = state.exposureEv
             )
@@ -801,7 +955,13 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
                 context = getApplication(),
                 bitmap = filtered,
                 fileNamePrefix = "GODCAM_IMG_$stamp",
-                mimeType = state.photoFormat.mimeType
+                photoFormat = state.photoFormat,
+                mimeType = state.photoFormat.mimeType,
+                quality = 100,
+                appliedLookName = preset.name,
+                focalLengthMm = state.capabilities.focalLengthMm,
+                apertureF = state.capabilities.apertureF,
+                isoValue = if (state.isAutoIso) 100 else state.manualIso
             )
             val w = savedResult.actualWidth
             val h = savedResult.actualHeight
@@ -829,15 +989,15 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
 
             MediaGallerySaver.sendAutoSaveNotification(
                 context = getApplication(),
-                title = "Photo Saved to Gallery",
-                message = "$title (${w}×${h} • ${preset.name}) saved to DCIM/GODCAM."
+                title = "High-Quality Photo Saved",
+                message = "$title (${w}×${h} ${state.photoFormat.label} • ${preset.name}) saved to DCIM/GODCAM."
             )
 
             _uiState.update {
                 it.copy(
                     isCapturing = false,
                     selectedGalleryTab = GalleryTab.PHOTOS,
-                    statusBannerMessage = "Saved Photo (${w}×${h} • ${preset.name}) to Gallery"
+                    statusBannerMessage = "Saved High-Res Photo (${w}×${h} ${state.photoFormat.label} • ${preset.name})"
                 )
             }
         }
@@ -846,12 +1006,13 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
     fun startVideoRecordingTimer() {
         triggerHaptic()
         val state = _uiState.value
+        ShutterSoundEngine.playVideoRecordTone(state.shutterSoundStyle, isStarting = true)
         val preset = FilterCatalog.getById(state.activeRecipe.presetId)
         _uiState.update {
             it.copy(
                 isRecordingVideo = true,
                 recordingElapsedSec = 1,
-                statusBannerMessage = "Recording ${it.videoResolution.fullLabel} · ${it.videoFps.fps}fps · ${preset.name}"
+                statusBannerMessage = "REC ${it.videoResolution.fullLabel} · ${it.videoFps.fps}fps · ${it.audioRecordingFormat.shortBadge} · ${preset.name}"
             )
         }
         recordingJob?.cancel()
@@ -864,11 +1025,13 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
     }
 
     fun finalizeAndAutoSaveVideo(
-        existingMp4File: File?,
-        livePreviewBitmap: Bitmap?
+        existingMp4File: File? = null,
+        livePreviewBitmap: Bitmap? = null,
+        capturedFrames: List<Bitmap> = emptyList()
     ) {
         val state = _uiState.value
         recordingJob?.cancel()
+        ShutterSoundEngine.playVideoRecordTone(state.shutterSoundStyle, isStarting = false)
         val duration = state.recordingElapsedSec.coerceAtLeast(1)
         _uiState.update {
             it.copy(
@@ -881,10 +1044,11 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
         viewModelScope.launch {
             val preset = FilterCatalog.getById(state.activeRecipe.presetId)
             val rawFrame = livePreviewBitmap
+                ?: capturedFrames.lastOrNull()
                 ?: _latestCameraFrame.value
                 ?: ImageFilterEngine.createNeutralCalibrationBitmap(state.videoResolution.width, state.videoResolution.height)
 
-            // Apply the active film filter + EV + aspect ratio to the video frame at the selected resolution
+            // Apply the active film filter + EV + aspect ratio to the video poster and live frames at the selected resolution
             val filteredPoster = ImageFilterEngine.renderFilteredBitmap(
                 source = rawFrame,
                 preset = preset,
@@ -894,11 +1058,29 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
                 applyCrop = false,
                 extraEv = state.exposureEv
             )
+
+            val frameTargetW = state.videoResolution.width.coerceIn(1280, 2560)
+            val frameTargetH = state.videoResolution.height.coerceIn(720, 1440)
+            val filteredMotionFrames = (if (capturedFrames.isNotEmpty()) capturedFrames else listOf(rawFrame)).mapNotNull { frame ->
+                runCatching {
+                    ImageFilterEngine.renderFilteredBitmap(
+                        source = frame,
+                        preset = preset,
+                        recipe = state.activeRecipe,
+                        targetWidth = frameTargetW,
+                        targetHeight = frameTargetH,
+                        applyCrop = false,
+                        extraEv = state.exposureEv
+                    )
+                }.getOrNull()
+            }
+
             val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
 
             val savedVideo = MediaGallerySaver.saveVideoToGallery(
                 context = getApplication(),
                 posterBitmap = filteredPoster,
+                capturedFrames = filteredMotionFrames,
                 existingMp4File = existingMp4File,
                 durationSec = duration,
                 width = state.videoResolution.width,
@@ -907,8 +1089,9 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
                 bitrateMbps = state.videoBitrateMbps
             )
             filteredPoster.recycle()
+            filteredMotionFrames.forEach { runCatching { it.recycle() } }
 
-            val audioTag = if (state.audioMuted) "Muted" else "Stereo Audio"
+            val audioTag = state.audioRecordingFormat.label
             val title = "GODCAM_VID_${stamp.takeLast(6)}"
 
             repository.insertCapturedOrExportedMedia(
@@ -928,14 +1111,15 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
 
             MediaGallerySaver.sendAutoSaveNotification(
                 context = getApplication(),
-                title = "Video Saved to Gallery",
+                title = "High-Quality Video Saved",
                 message = "$title (${savedVideo.actualWidth}×${savedVideo.actualHeight} ${state.videoFps.fps}fps • ${preset.name}) saved to DCIM/GODCAM."
             )
 
             _uiState.update {
                 it.copy(
                     isCapturing = false,
-                    statusBannerMessage = "Saved ${savedVideo.actualWidth}×${savedVideo.actualHeight} ${state.videoFps.fps}fps Video (${preset.name}) to Gallery"
+                    selectedGalleryTab = GalleryTab.VIDEOS,
+                    statusBannerMessage = "Saved ${savedVideo.actualWidth}×${savedVideo.actualHeight} ${state.videoFps.fps}fps Video (${preset.name} • ${state.audioRecordingFormat.shortBadge})"
                 )
             }
         }

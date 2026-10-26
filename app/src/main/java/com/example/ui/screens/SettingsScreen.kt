@@ -52,6 +52,7 @@ import com.example.data.UserPreferencesState
 import com.example.model.AppThemeOption
 import com.example.model.GridMode
 import com.example.model.PhotoFormat
+import com.example.model.ShutterSoundStyle
 import com.example.ui.AppDestination
 import com.example.ui.CameraUiState
 import com.example.ui.GodcamViewModel
@@ -186,9 +187,14 @@ fun SettingsScreen(
                     if (caps.encoderNames.isNotEmpty()) {
                         CapabilityStatRow("MediaCodec Encoders", caps.encoderNames.joinToString())
                     }
+                    CapabilityStatRow("Native Audio Sample Rate", "${caps.nativeAudioSampleRateHz} Hz")
+                    CapabilityStatRow("Supported Audio Formats", caps.supportedAudioFormats.joinToString { it.shortBadge })
+                    if (caps.audioEncoderNames.isNotEmpty()) {
+                        CapabilityStatRow("Hardware Audio Encoders", caps.audioEncoderNames.joinToString())
+                    }
                     CapabilityStatRow("ISO Sensitivity Range", "ISO ${caps.isoRange.first} – ${caps.isoRange.last}")
                     CapabilityStatRow("Exposure Compensation Range", "${caps.evRange.start} EV to +${caps.evRange.endInclusive} EV")
-                    CapabilityStatRow("RAW (DNG) Sensor Support", if (caps.supportsRawCapture) "Supported" else "JPEG / HEIF Only")
+                    CapabilityStatRow("RAW (DNG) Sensor Support", if (caps.supportsRawCapture) "Supported" else "JPEG / PNG / WebP Only")
                     CapabilityStatRow("8K Native Hardware Support", if (caps.supports8K) "Supported" else "Not Supported")
                     HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.45f))
                     CapabilityStatRow(
@@ -347,16 +353,89 @@ fun SettingsScreen(
                         }
                     }
 
-                    Text("Default Photo Format", style = MaterialTheme.typography.labelLarge)
+                    Text("Default Photo Format (Hardware Supported)", style = MaterialTheme.typography.labelLarge)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        PhotoFormat.entries.forEach { fmt ->
+                        caps.supportedPhotoFormats.forEach { fmt ->
                             FilterChip(
                                 selected = uiState.photoFormat == fmt,
                                 onClick = { viewModel.setPhotoFormat(fmt) },
                                 label = { Text(fmt.label) }
+                            )
+                        }
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Fuji & Digital Camera Shutter Sound",
+                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
+                            )
+                            Text(
+                                text = "${uiState.shutterSoundStyle.label} — ${uiState.shutterSoundStyle.description}",
+                                style = MaterialTheme.typography.bodyMedium.copy(
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            )
+                        }
+                        Switch(
+                            checked = uiState.shutterSoundStyle != ShutterSoundStyle.OFF,
+                            onCheckedChange = { viewModel.toggleShutterSoundOnOff() },
+                            modifier = Modifier.testTag("settings_shutter_sound_switch")
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        ShutterSoundStyle.entries.forEach { style ->
+                            FilterChip(
+                                selected = uiState.shutterSoundStyle == style,
+                                onClick = { viewModel.setShutterSoundStyle(style) },
+                                label = { Text(style.shortBadge) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = MaterialTheme.colorScheme.primary,
+                                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                                ),
+                                modifier = Modifier.testTag("settings_shutter_${style.name}")
+                            )
+                        }
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
+
+                    Text("Default Video Audio Recording Format (Hardware Verified)", style = MaterialTheme.typography.labelLarge)
+                    Text(
+                        text = "${uiState.audioRecordingFormat.label} (${uiState.audioRecordingFormat.specsLabel})",
+                        style = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        caps.supportedAudioFormats.forEach { audioFmt ->
+                            FilterChip(
+                                selected = uiState.audioRecordingFormat == audioFmt,
+                                onClick = { viewModel.setAudioRecordingFormat(audioFmt) },
+                                label = { Text("${audioFmt.label} (${audioFmt.shortBadge})") },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = MaterialTheme.colorScheme.primary,
+                                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                                ),
+                                modifier = Modifier.testTag("settings_audio_${audioFmt.name}")
                             )
                         }
                     }

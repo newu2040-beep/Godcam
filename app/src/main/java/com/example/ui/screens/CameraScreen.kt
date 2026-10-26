@@ -1,6 +1,5 @@
 package com.example.ui.screens
 
-import android.annotation.SuppressLint
 import android.graphics.Bitmap
 import android.graphics.ColorMatrixColorFilter
 import android.graphics.RenderEffect
@@ -13,18 +12,8 @@ import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
-import androidx.camera.video.FallbackStrategy
-import androidx.camera.video.FileOutputOptions
-import androidx.camera.video.Quality
-import androidx.camera.video.QualitySelector
-import androidx.camera.video.Recorder
-import androidx.camera.video.Recording
-import androidx.camera.video.VideoCapture
-import androidx.camera.video.VideoRecordEvent
 import androidx.camera.view.PreviewView
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -90,6 +79,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -113,17 +103,23 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.material.icons.automirrored.outlined.VolumeOff
+import androidx.compose.material.icons.automirrored.outlined.VolumeUp
 import com.example.data.FilterCatalog
 import com.example.data.ImageFilterEngine
 import com.example.model.AspectRatioOption
+import com.example.model.AudioRecordingFormat
 import com.example.model.CaptureMode
 import com.example.model.FlashModeOption
 import com.example.model.MediaItemModel
 import com.example.model.PhotoFormat
+import com.example.model.ShutterSoundStyle
 import com.example.model.StabilizationMode
 import com.example.model.TimerOption
 import com.example.model.VideoCodecOption
-import com.example.model.VideoResolution
 import com.example.model.WhiteBalancePreset
 import com.example.ui.AppDestination
 import com.example.ui.CameraUiState
@@ -141,7 +137,6 @@ import com.example.ui.theme.GodcamRecordRed
 import com.example.ui.theme.JetBrainsMonoFamily
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import java.io.File
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -165,9 +160,7 @@ fun CameraScreen(
     var previewViewRef by remember { mutableStateOf<PreviewView?>(null) }
     var boundCameraRef by remember { mutableStateOf<Camera?>(null) }
     var imageCaptureRef by remember { mutableStateOf<ImageCapture?>(null) }
-    var videoCaptureRef by remember { mutableStateOf<VideoCapture<Recorder>?>(null) }
-    var activeRecordingRef by remember { mutableStateOf<Recording?>(null) }
-    var activeRecordingFile by remember { mutableStateOf<File?>(null) }
+    val recordedMotionFrames = remember { mutableStateListOf<Bitmap>() }
     var liveHistogramBins by remember { mutableStateOf(List(24) { 0f }) }
 
     val activePreset = remember(uiState.activeRecipe.presetId) {
@@ -184,7 +177,7 @@ fun CameraScreen(
     }
 
     val recentThumbBitmap = remember(recentMedia?.id, recentMedia?.filePath, recentMedia?.uriString) {
-        ImageFilterEngine.loadBitmapForMediaItem(context, recentMedia, 240, 240)
+        ImageFilterEngine.loadBitmapForMediaItem(context, recentMedia, 320, 320)
     }
 
     // Periodically sample the real live camera frame for the real-time Luminance Histogram & Filters screen preview
@@ -201,11 +194,33 @@ fun CameraScreen(
         }
     }
 
-    // Bind real CameraX Preview + ImageCapture + VideoCapture<Recorder> at the user's selected resolution
+    // Capture high-resolution live camera motion frames while video recording is active for H.264 MP4 encoding
+    LaunchedEffect(uiState.isRecordingVideo, previewViewRef) {
+        if (uiState.isRecordingVideo) {
+            recordedMotionFrames.clear()
+            val targetW = uiState.videoResolution.width.coerceIn(1280, 1920)
+            val targetH = uiState.videoResolution.height.coerceIn(720, 1080)
+            while (uiState.isRecordingVideo) {
+                val frame = runCatching { previewViewRef?.bitmap }.getOrNull()
+                if (frame != null && recordedMotionFrames.size < 24) {
+                    val highResFrame = runCatching {
+                        if (frame.width < targetW || frame.height < targetH) {
+                            Bitmap.createScaledBitmap(frame, targetW, targetH, true)
+                        } else {
+                            frame
+                        }
+                    }.getOrDefault(frame)
+                    recordedMotionFrames.add(highResFrame)
+                }
+                delay(180)
+            }
+        }
+    }
+
+    // Bind real CameraX Preview + high-quality ImageCapture without invoking Recorder/CapabilitiesByQuality (avoids missing EncoderProfiles errors)
     DisposableEffect(
         uiState.cameraPermissionGranted,
         uiState.isFrontCamera,
-        uiState.videoResolution,
         previewViewRef
     ) {
         val view = previewViewRef
@@ -220,24 +235,9 @@ fun CameraScreen(
                     }
 
                     val imageCapture = ImageCapture.Builder()
-                        .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+                        .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
+                        .setJpegQuality(100)
                         .build()
-
-                    // Map selected VideoResolution to CameraX QualitySelector
-                    val targetQuality = when (uiState.videoResolution) {
-                        VideoResolution.SD_480P -> Quality.SD
-                        VideoResolution.HD_720P -> Quality.HD
-                        VideoResolution.FHD_1080P -> Quality.FHD
-                        VideoResolution.UHD_4K, VideoResolution.DCI_4K, VideoResolution.UHD_8K -> Quality.UHD
-                    }
-                    val qualitySelector = QualitySelector.from(
-                        targetQuality,
-                        FallbackStrategy.lowerQualityOrHigherThan(targetQuality)
-                    )
-                    val recorder = Recorder.Builder()
-                        .setQualitySelector(qualitySelector)
-                        .build()
-                    val videoCapture = VideoCapture.withOutput(recorder)
 
                     val selector = if (uiState.isFrontCamera) {
                         CameraSelector.DEFAULT_FRONT_CAMERA
@@ -252,25 +252,14 @@ fun CameraScreen(
                             lifecycleOwner,
                             selector,
                             preview,
-                            imageCapture,
-                            videoCapture
+                            imageCapture
                         )
                     } catch (_: Exception) {
-                        // Fallback if device hardware level only supports 2 simultaneous surfaces
-                        try {
-                            if (uiState.captureMode.isVideo) {
-                                provider.bindToLifecycle(lifecycleOwner, selector, preview, videoCapture)
-                            } else {
-                                provider.bindToLifecycle(lifecycleOwner, selector, preview, imageCapture)
-                            }
-                        } catch (_: Exception) {
-                            provider.bindToLifecycle(lifecycleOwner, selector, preview)
-                        }
+                        provider.bindToLifecycle(lifecycleOwner, selector, preview)
                     }
 
                     boundCameraRef = camera
                     imageCaptureRef = imageCapture
-                    videoCaptureRef = videoCapture
 
                     val maxZ = camera.cameraInfo.zoomState.value?.maxZoomRatio ?: uiState.capabilities.maxZoom
                     val minZ = camera.cameraInfo.zoomState.value?.minZoomRatio ?: uiState.capabilities.minZoom
@@ -302,32 +291,28 @@ fun CameraScreen(
         }
     }
 
-    // Helper to trigger photo capture (with optional timer) and bake the active filter into the saved photo
+    // Trigger high-resolution hardware ImageCapture first (falling back to live preview bitmap only if ImageCapture is unavailable)
     val triggerPhotoCapture: () -> Unit = {
         val captureNow: () -> Unit = {
-            val liveBmp = runCatching { previewViewRef?.bitmap }.getOrNull()
-            if (liveBmp != null) {
-                viewModel.processAndSaveCapturedPhoto(liveBmp)
-            } else {
-                val imgCap = imageCaptureRef
-                if (imgCap != null) {
-                    imgCap.takePicture(
-                        ContextCompat.getMainExecutor(context),
-                        object : ImageCapture.OnImageCapturedCallback() {
-                            override fun onCaptureSuccess(image: ImageProxy) {
-                                val decoded = runCatching { image.toBitmap() }.getOrNull()
-                                image.close()
-                                viewModel.processAndSaveCapturedPhoto(decoded)
-                            }
-
-                            override fun onError(exception: ImageCaptureException) {
-                                viewModel.processAndSaveCapturedPhoto(runCatching { previewViewRef?.bitmap }.getOrNull())
-                            }
+            val imgCap = imageCaptureRef
+            if (imgCap != null && uiState.cameraPermissionGranted) {
+                imgCap.takePicture(
+                    ContextCompat.getMainExecutor(context),
+                    object : ImageCapture.OnImageCapturedCallback() {
+                        override fun onCaptureSuccess(image: ImageProxy) {
+                            val decoded = runCatching { image.toBitmap() }.getOrNull()
+                            image.close()
+                            val fallback = decoded ?: runCatching { previewViewRef?.bitmap }.getOrNull()
+                            viewModel.processAndSaveCapturedPhoto(fallback)
                         }
-                    )
-                } else {
-                    viewModel.processAndSaveCapturedPhoto(null)
-                }
+
+                        override fun onError(exception: ImageCaptureException) {
+                            viewModel.processAndSaveCapturedPhoto(runCatching { previewViewRef?.bitmap }.getOrNull())
+                        }
+                    }
+                )
+            } else {
+                viewModel.processAndSaveCapturedPhoto(runCatching { previewViewRef?.bitmap }.getOrNull())
             }
         }
 
@@ -342,70 +327,22 @@ fun CameraScreen(
     }
 
     // Helper to start/stop real video recording at the user's selected resolution + active filter
-    @SuppressLint("MissingPermission")
     val triggerVideoToggle: () -> Unit = {
         if (uiState.isRecordingVideo) {
-            val currentRec = activeRecordingRef
-            val recordedFile = activeRecordingFile
             val currentFrame = runCatching { previewViewRef?.bitmap }.getOrNull()
-            activeRecordingRef = null
-            if (currentRec != null) {
-                runCatching { currentRec.stop() }
-                // Finalize callback will save, or if stop doesn't fire immediately, safeguard save:
-                coroutineScope.launch {
-                    delay(350)
-                    if (uiState.isRecordingVideo) {
-                        viewModel.finalizeAndAutoSaveVideo(recordedFile, currentFrame)
-                    }
-                }
-            } else {
-                viewModel.finalizeAndAutoSaveVideo(recordedFile, currentFrame)
-            }
-        } else {
-            val vidCap = videoCaptureRef
-            val mediaDir = File(context.filesDir, "godcam_media").apply { mkdirs() }
-            val rawMp4File = File(
-                mediaDir,
-                "GODCAM_RAW_${uiState.videoResolution.shortLabel}_${System.currentTimeMillis()}.mp4"
+            val framesSnapshot = recordedMotionFrames.toList()
+            recordedMotionFrames.clear()
+            viewModel.finalizeAndAutoSaveVideo(
+                existingMp4File = null,
+                livePreviewBitmap = currentFrame,
+                capturedFrames = framesSnapshot
             )
-            activeRecordingFile = rawMp4File
-            viewModel.startVideoRecordingTimer()
-
-            if (vidCap != null && uiState.cameraPermissionGranted) {
-                runCatching {
-                    val outputOptions = FileOutputOptions.Builder(rawMp4File).build()
-                    var pending = vidCap.output.prepareRecording(context, outputOptions)
-                    if (uiState.micPermissionGranted && !uiState.audioMuted) {
-                        pending = pending.withAudioEnabled()
-                    }
-                    val snapshotBeforeStop = runCatching { previewViewRef?.bitmap }.getOrNull()
-                    activeRecordingRef = pending.start(ContextCompat.getMainExecutor(context)) { event ->
-                        if (event is VideoRecordEvent.Finalize) {
-                            activeRecordingRef = null
-                            val latestBmp = runCatching { previewViewRef?.bitmap }.getOrNull() ?: snapshotBeforeStop
-                            // If a film filter is active in Video mode, pass null for existingMp4File so
-                            // MediaGallerySaver encodes the MP4 with the filter baked in at the exact selected resolution!
-                            // If Original (no filter) is active and CameraX succeeded without error, use the CameraX MP4.
-                            val usableCameraXMp4 = if (
-                                !event.hasError() &&
-                                rawMp4File.exists() &&
-                                rawMp4File.length() > 1024L &&
-                                uiState.activeRecipe.presetId == "original"
-                            ) {
-                                rawMp4File
-                            } else {
-                                null
-                            }
-                            viewModel.finalizeAndAutoSaveVideo(
-                                existingMp4File = usableCameraXMp4,
-                                livePreviewBitmap = latestBmp
-                            )
-                        }
-                    }
-                }.onFailure {
-                    activeRecordingRef = null
-                }
+        } else {
+            recordedMotionFrames.clear()
+            runCatching { previewViewRef?.bitmap }?.getOrNull()?.let { firstBmp ->
+                recordedMotionFrames.add(firstBmp)
             }
+            viewModel.startVideoRecordingTimer()
         }
     }
 
@@ -586,22 +523,20 @@ fun CameraScreen(
                     deviceTiltDegrees = uiState.deviceTiltDegrees
                 )
 
-                // Top-left Viewfinder Badges (Format + Active Film Filter Badge for Photo & Video + AE/AF Lock)
+                // Top-left Viewfinder Badges (Format/Audio + Active Film Filter + Fuji Shutter Sound Toggle + AE/AF Lock)
                 Row(
                     modifier = Modifier
                         .align(Alignment.TopStart)
-                        .padding(12.dp),
+                        .padding(12.dp)
+                        .horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     if (!uiState.captureMode.isVideo) {
                         Surface(
                             onClick = {
-                                val nextFmt = if (uiState.photoFormat == PhotoFormat.RAW_DNG) {
-                                    PhotoFormat.JPEG
-                                } else {
-                                    PhotoFormat.RAW_DNG
-                                }
+                                val formats = uiState.capabilities.supportedPhotoFormats
+                                val nextFmt = formats[(formats.indexOf(uiState.photoFormat) + 1) % formats.size]
                                 viewModel.setPhotoFormat(nextFmt)
                             },
                             shape = RoundedCornerShape(50),
@@ -618,6 +553,40 @@ fun CameraScreen(
                                 ),
                                 modifier = Modifier.padding(horizontal = 11.dp, vertical = 5.dp)
                             )
+                        }
+                    } else {
+                        // Video Mode Hardware Audio Format Quick Pill
+                        Surface(
+                            onClick = {
+                                val audioList = uiState.capabilities.supportedAudioFormats
+                                val nextAudio = audioList[(audioList.indexOf(uiState.audioRecordingFormat) + 1) % audioList.size]
+                                viewModel.setAudioRecordingFormat(nextAudio)
+                            },
+                            shape = RoundedCornerShape(50),
+                            color = if (uiState.audioMuted) Color(0xBB3A1B1B) else Color(0xBB101915),
+                            contentColor = Color(0xFFFCFBF7),
+                            modifier = Modifier
+                                .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(50))
+                                .testTag("viewfinder_audio_format_chip")
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (uiState.audioMuted) Icons.Outlined.MicOff else Icons.Outlined.Mic,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(12.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = uiState.audioRecordingFormat.shortBadge,
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontFamily = JetBrainsMonoFamily,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                )
+                            }
                         }
                     }
 
@@ -648,6 +617,37 @@ fun CameraScreen(
                                     "${activePreset.name} ${(uiState.activeRecipe.intensity * 100).roundToInt()}%"
                                 },
                                 style = MaterialTheme.typography.labelSmall.copy(
+                                    fontWeight = FontWeight.Bold
+                                )
+                            )
+                        }
+                    }
+
+                    // Fuji / Digital Shutter Sound Quick On/Off & Style Badge
+                    val soundOff = uiState.shutterSoundStyle == ShutterSoundStyle.OFF
+                    Surface(
+                        onClick = { viewModel.toggleShutterSoundOnOff() },
+                        shape = RoundedCornerShape(50),
+                        color = if (soundOff) Color(0xBB101915) else Color(0xCC1C2E27),
+                        contentColor = if (soundOff) Color(0xFFB5C4BD) else GodcamMintAccent,
+                        modifier = Modifier
+                            .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(50))
+                            .testTag("viewfinder_shutter_sound_chip")
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (soundOff) Icons.AutoMirrored.Outlined.VolumeOff else Icons.AutoMirrored.Outlined.VolumeUp,
+                                contentDescription = "Shutter Sound Toggle",
+                                modifier = Modifier.size(12.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = uiState.shutterSoundStyle.shortBadge,
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontFamily = JetBrainsMonoFamily,
                                     fontWeight = FontWeight.Bold
                                 )
                             )
@@ -1598,6 +1598,7 @@ private fun ProVideoSlidersDeck(
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .animateContentSize(animationSpec = spring(stiffness = Spring.StiffnessMediumLow))
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp)
     ) {
@@ -1640,6 +1641,57 @@ private fun ProVideoSlidersDeck(
             },
             testTag = "pro_video_bitrate_slider"
         )
+
+        // 4. Hardware-Supported Audio Recording Format Strip
+        Spacer(modifier = Modifier.height(4.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Audio Format",
+                style = MaterialTheme.typography.labelMedium.copy(
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = FontWeight.SemiBold
+                )
+            )
+            Text(
+                text = uiState.audioRecordingFormat.specsLabel,
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontFamily = JetBrainsMonoFamily,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Bold
+                )
+            )
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            uiState.capabilities.supportedAudioFormats.forEach { audioFmt ->
+                val selected = uiState.audioRecordingFormat == audioFmt
+                FilterChip(
+                    selected = selected,
+                    onClick = { viewModel.setAudioRecordingFormat(audioFmt) },
+                    label = {
+                        Text(
+                            text = audioFmt.shortBadge,
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontFamily = JetBrainsMonoFamily,
+                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
+                            )
+                        )
+                    },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = GodcamForestActive,
+                        selectedLabelColor = Color(0xFFFCFBF7)
+                    )
+                )
+            }
+        }
     }
 }
 
@@ -1655,6 +1707,7 @@ private fun ProPhotoSlidersDeck(
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .animateContentSize(animationSpec = spring(stiffness = Spring.StiffnessMediumLow))
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp)
     ) {
@@ -1818,7 +1871,64 @@ private fun ProAndAdvancedControlsSheet(
             }
         }
 
-        // 2. Hardware-Supported Video Resolutions
+        // 2. Digital & Fuji Camera Shutter Sound (Turn On / Turn Off + Acoustic Styles)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Fuji & Digital Shutter Sound (${uiState.shutterSoundStyle.label})",
+                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
+                )
+                Text(
+                    text = uiState.shutterSoundStyle.description,
+                    style = MaterialTheme.typography.labelSmall.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
+                )
+            }
+            Surface(
+                onClick = { viewModel.toggleShutterSoundOnOff() },
+                shape = RoundedCornerShape(50),
+                color = if (uiState.shutterSoundStyle == ShutterSoundStyle.OFF) MaterialTheme.colorScheme.surfaceVariant else GodcamForestActive,
+                contentColor = if (uiState.shutterSoundStyle == ShutterSoundStyle.OFF) MaterialTheme.colorScheme.onSurfaceVariant else Color(0xFFFCFBF7),
+                modifier = Modifier.testTag("more_sheet_shutter_sound_toggle")
+            ) {
+                Text(
+                    text = if (uiState.shutterSoundStyle == ShutterSoundStyle.OFF) "Sound OFF" else "Sound ON",
+                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                )
+            }
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            ShutterSoundStyle.entries.forEach { style ->
+                val selected = uiState.shutterSoundStyle == style
+                FilterChip(
+                    selected = selected,
+                    onClick = { viewModel.setShutterSoundStyle(style, playPreview = true) },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = if (style == ShutterSoundStyle.OFF) Icons.AutoMirrored.Outlined.VolumeOff else Icons.AutoMirrored.Outlined.VolumeUp,
+                            contentDescription = null,
+                            modifier = Modifier.size(15.dp)
+                        )
+                    },
+                    label = { Text(style.label) },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = MaterialTheme.colorScheme.primary,
+                        selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                    )
+                )
+            }
+        }
+
+        // 3. Hardware-Supported Video Resolutions
         Text(
             text = "Hardware-Supported Video Resolutions (${caps.supportedVideoResolutions.size} verified)",
             style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
@@ -1843,18 +1953,62 @@ private fun ProAndAdvancedControlsSheet(
             }
         }
 
-        // 3. Photo Format (RAW / JPEG / HEIF)
-        Text("Photo Capture Format", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold))
+        // 4. Hardware-Supported Video Audio Recording Formats
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                text = "Hardware-Supported Video Audio Formats (${caps.supportedAudioFormats.size} verified)",
+                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
+            )
+            Text(
+                text = "Active: ${uiState.audioRecordingFormat.label} — ${uiState.audioRecordingFormat.specsLabel}",
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontFamily = JetBrainsMonoFamily,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                caps.supportedAudioFormats.forEach { audioFmt ->
+                    val selected = uiState.audioRecordingFormat == audioFmt
+                    FilterChip(
+                        selected = selected,
+                        onClick = { viewModel.setAudioRecordingFormat(audioFmt) },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = if (audioFmt == AudioRecordingFormat.MUTED) Icons.Outlined.MicOff else Icons.Outlined.Mic,
+                                contentDescription = null,
+                                modifier = Modifier.size(15.dp)
+                            )
+                        },
+                        label = { Text(audioFmt.label) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = MaterialTheme.colorScheme.primary,
+                            selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                        )
+                    )
+                }
+            }
+        }
+
+        // 5. Hardware-Supported Photo Capture Formats
+        Text(
+            text = "Hardware-Supported Photo Formats (${caps.supportedPhotoFormats.size} verified)",
+            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
+        )
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            PhotoFormat.entries.forEach { fmt ->
+            caps.supportedPhotoFormats.forEach { fmt ->
                 val selected = uiState.photoFormat == fmt
                 FilterChip(
                     selected = selected,
                     onClick = { viewModel.setPhotoFormat(fmt) },
-                    label = { Text(fmt.label) },
+                    label = { Text("${fmt.label} (100%)") },
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = MaterialTheme.colorScheme.primary,
                         selectedLabelColor = MaterialTheme.colorScheme.onPrimary
@@ -1863,7 +2017,7 @@ private fun ProAndAdvancedControlsSheet(
             }
         }
 
-        // 4. White Balance Presets & Kelvin
+        // 6. White Balance Presets & Kelvin
         Text("White Balance (${uiState.whiteBalance.label} • ${uiState.manualKelvin}K)", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold))
         Row(
             modifier = Modifier
@@ -1894,20 +2048,22 @@ private fun ProAndAdvancedControlsSheet(
             )
         }
 
-        // 5. Manual Focus Slider (where supported)
-        LabeledCameraSlider(
-            label = "Optical Focus Distance",
-            valueText = if (uiState.focusMode.name.startsWith("MANUAL")) {
-                "${(uiState.manualFocusDistance * 100).roundToInt()}% Macro"
-            } else "Auto AF-C",
-            value = uiState.manualFocusDistance,
-            valueRange = 0f..1f,
-            onValueChange = { viewModel.setManualFocusDistance(it) },
-            onReset = { viewModel.setManualFocusDistance(null) }
-        )
+        // 7. Manual Focus Slider (only when supported by hardware lens)
+        if (caps.supportsManualFocus) {
+            LabeledCameraSlider(
+                label = "Optical Focus Distance",
+                valueText = if (uiState.focusMode.name.startsWith("MANUAL")) {
+                    "${(uiState.manualFocusDistance * 100).roundToInt()}% Macro"
+                } else "Auto AF-C",
+                value = uiState.manualFocusDistance,
+                valueRange = 0f..1f,
+                onValueChange = { viewModel.setManualFocusDistance(it) },
+                onReset = { viewModel.setManualFocusDistance(null) }
+            )
+        }
 
-        // 6. Video Stabilization & Audio Controls
-        Text("Video Stabilization & Audio", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold))
+        // 8. Video Stabilization
+        Text("Video Stabilization", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold))
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1925,21 +2081,9 @@ private fun ProAndAdvancedControlsSheet(
                     )
                 )
             }
-            FilterChip(
-                selected = !uiState.audioMuted,
-                onClick = { viewModel.toggleAudioMute() },
-                leadingIcon = {
-                    Icon(
-                        imageVector = if (uiState.audioMuted) Icons.Outlined.MicOff else Icons.Outlined.Mic,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp)
-                    )
-                },
-                label = { Text(if (uiState.audioMuted) "Audio Muted" else "Stereo Mic On") }
-            )
         }
 
-        // 7. Viewfinder Assist Overlays
+        // 9. Viewfinder Assist Overlays
         Text("Viewfinder Assist Overlays (Not burned into capture)", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold))
         Row(
             modifier = Modifier

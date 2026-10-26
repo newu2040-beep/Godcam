@@ -16,9 +16,11 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import com.example.model.AppThemeOption
 import com.example.model.AspectRatioOption
+import com.example.model.AudioRecordingFormat
 import com.example.model.GridMode
 import com.example.model.MediaItemModel
 import com.example.model.PhotoFormat
+import com.example.model.ShutterSoundStyle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -134,6 +136,8 @@ data class UserPreferencesState(
     val defaultGrid: GridMode = GridMode.THREE_BY_THREE,
     val defaultRatio: AspectRatioOption = AspectRatioOption.RATIO_4_3,
     val defaultPhotoFormat: PhotoFormat = PhotoFormat.JPEG,
+    val shutterSoundStyle: ShutterSoundStyle = ShutterSoundStyle.FUJI_MECHANICAL,
+    val audioRecordingFormat: AudioRecordingFormat = AudioRecordingFormat.AAC_LC_STEREO_48K,
     val hapticsEnabled: Boolean = true,
     val preserveLocationMetadata: Boolean = false
 )
@@ -147,6 +151,8 @@ class GodcamRepository(
         val GRID = stringPreferencesKey("grid_mode")
         val RATIO = stringPreferencesKey("default_ratio")
         val FORMAT = stringPreferencesKey("default_photo_format")
+        val SHUTTER_SOUND = stringPreferencesKey("shutter_sound_style")
+        val AUDIO_FORMAT = stringPreferencesKey("audio_recording_format")
         val HAPTICS = booleanPreferencesKey("haptics_enabled")
         val LOCATION_META = booleanPreferencesKey("preserve_location_meta")
     }
@@ -168,11 +174,17 @@ class GodcamRepository(
         val ratio = AspectRatioOption.entries.firstOrNull { it.name == ratioName } ?: AspectRatioOption.RATIO_4_3
         val formatName = prefs[Keys.FORMAT] ?: PhotoFormat.JPEG.name
         val format = PhotoFormat.entries.firstOrNull { it.name == formatName } ?: PhotoFormat.JPEG
+        val shutterName = prefs[Keys.SHUTTER_SOUND] ?: ShutterSoundStyle.FUJI_MECHANICAL.name
+        val shutterStyle = ShutterSoundStyle.entries.firstOrNull { it.name == shutterName } ?: ShutterSoundStyle.FUJI_MECHANICAL
+        val audioName = prefs[Keys.AUDIO_FORMAT] ?: AudioRecordingFormat.AAC_LC_STEREO_48K.name
+        val audioFmt = AudioRecordingFormat.entries.firstOrNull { it.name == audioName } ?: AudioRecordingFormat.AAC_LC_STEREO_48K
         UserPreferencesState(
             theme = theme,
             defaultGrid = grid,
             defaultRatio = ratio,
             defaultPhotoFormat = format,
+            shutterSoundStyle = shutterStyle,
+            audioRecordingFormat = audioFmt,
             hapticsEnabled = prefs[Keys.HAPTICS] ?: true,
             preserveLocationMetadata = prefs[Keys.LOCATION_META] ?: false
         )
@@ -192,6 +204,14 @@ class GodcamRepository(
 
     suspend fun setDefaultPhotoFormat(format: PhotoFormat) {
         context.dataStore.edit { it[Keys.FORMAT] = format.name }
+    }
+
+    suspend fun setShutterSoundStyle(style: ShutterSoundStyle) {
+        context.dataStore.edit { it[Keys.SHUTTER_SOUND] = style.name }
+    }
+
+    suspend fun setAudioRecordingFormat(format: AudioRecordingFormat) {
+        context.dataStore.edit { it[Keys.AUDIO_FORMAT] = format.name }
     }
 
     suspend fun setHapticsEnabled(enabled: Boolean) {

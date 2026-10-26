@@ -124,6 +124,117 @@ enum class ColorProfileOption(val label: String, val description: String) {
     FLAT_NATURAL("Natural Flat", "Reduced contrast & soft roll-off for post grading")
 }
 
+enum class ShutterSoundStyle(
+    val label: String,
+    val shortBadge: String,
+    val description: String
+) {
+    FUJI_MECHANICAL(
+        "Fuji X Mechanical",
+        "Fuji X",
+        "Crisp Fujifilm X-Series dual-curtain focal-plane click"
+    ),
+    FUJI_LEAF(
+        "Fuji X100 Leaf",
+        "X100 Leaf",
+        "Whisper-quiet Fujifilm X100 optical leaf shutter snick"
+    ),
+    LEICA_RANGEFINDER(
+        "Rangefinder M",
+        "Rangefinder",
+        "Dampened brass cloth-curtain rangefinder click"
+    ),
+    CLASSIC_SLR(
+        "Classic Film SLR",
+        "35mm SLR",
+        "Tactile 35mm mirror slap + mechanical curtain release"
+    ),
+    DIGITAL_PRO(
+        "Digital Studio",
+        "Digital",
+        "Clean mirrorless studio confirmation chirp"
+    ),
+    OFF(
+        "Off (Silent)",
+        "Silent",
+        "Mute all camera shutter and video start/stop sounds"
+    )
+}
+
+enum class AudioRecordingFormat(
+    val label: String,
+    val specsLabel: String,
+    val shortBadge: String,
+    val mimeType: String,
+    val sampleRateHz: Int,
+    val channelCount: Int,
+    val bitrateBps: Int
+) {
+    AAC_LC_STEREO_48K(
+        "AAC-LC Stereo (48kHz)",
+        "48 kHz • 320 kbps • 2ch Stereo AAC-LC",
+        "AAC 48k",
+        "audio/mp4a-latm",
+        48000,
+        2,
+        320_000
+    ),
+    HE_AAC_STEREO_48K(
+        "HE-AAC Studio (48kHz)",
+        "48 kHz • 192 kbps • High-Efficiency Stereo",
+        "HE-AAC",
+        "audio/mp4a-latm",
+        48000,
+        2,
+        192_000
+    ),
+    PCM_LPCM_48K(
+        "Uncompressed LPCM (16-Bit)",
+        "48 kHz • 1536 kbps • Linear PCM Master",
+        "LPCM 48k",
+        "audio/raw",
+        48000,
+        2,
+        1_536_000
+    ),
+    OPUS_STUDIO_48K(
+        "Opus Low-Latency (48kHz)",
+        "48 kHz • 256 kbps • Wideband Opus",
+        "Opus 48k",
+        "audio/opus",
+        48000,
+        2,
+        256_000
+    ),
+    FLAC_LOSSLESS_48K(
+        "FLAC Lossless (48kHz)",
+        "48 kHz • Lossless Archival Stereo",
+        "FLAC",
+        "audio/flac",
+        48000,
+        2,
+        768_000
+    ),
+    AAC_MONO_VOICE_44K(
+        "Mono Voice (44.1kHz)",
+        "44.1 kHz • 128 kbps • 1ch Vocal Focus",
+        "Mono 44.1k",
+        "audio/mp4a-latm",
+        44100,
+        1,
+        128_000
+    ),
+    MUTED(
+        "Muted (Silent Track)",
+        "No microphone audio recorded",
+        "Muted",
+        "none",
+        0,
+        0,
+        0
+    )
+}
+
 enum class ExportQualityPreset(
     val label: String,
     val purpose: String,
@@ -300,7 +411,20 @@ data class HardwareCapabilities(
     val supportedCodecs: List<VideoCodecOption> = listOf(
         VideoCodecOption.H264
     ),
+    val supportedPhotoFormats: List<PhotoFormat> = listOf(
+        PhotoFormat.JPEG,
+        PhotoFormat.PNG,
+        PhotoFormat.WEBP
+    ),
+    val supportedAudioFormats: List<AudioRecordingFormat> = listOf(
+        AudioRecordingFormat.AAC_LC_STEREO_48K,
+        AudioRecordingFormat.PCM_LPCM_48K,
+        AudioRecordingFormat.AAC_MONO_VOICE_44K,
+        AudioRecordingFormat.MUTED
+    ),
     val encoderNames: List<String> = emptyList(),
+    val audioEncoderNames: List<String> = emptyList(),
+    val nativeAudioSampleRateHz: Int = 48000,
     val supports8K: Boolean = false,
     val availableStorageMb: Long = 0L,
     val totalStorageMb: Long = 0L,
