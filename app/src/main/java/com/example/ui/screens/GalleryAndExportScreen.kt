@@ -88,6 +88,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -131,7 +132,9 @@ import com.example.ui.theme.GodcamAmberGold
 import com.example.ui.theme.GodcamForestActive
 import com.example.ui.theme.GodcamMintAccent
 import com.example.ui.theme.JetBrainsMonoFamily
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -613,7 +616,7 @@ private fun GalleryThumbnailTile(
 }
 
 /**
- * Export Settings Sheet.
+ * Export Settings Sheet — Strictly separates Photo Export Studio settings from Video Export Studio settings.
  */
 @Composable
 private fun ExportStudioCardSheet(
@@ -622,9 +625,10 @@ private fun ExportStudioCardSheet(
     onShareCompleted: (MediaItemModel) -> Unit
 ) {
     val target = uiState.exportTargetMedia
+    val isVideo = target?.isVideo == true
     val cfg = uiState.exportConfig
     val estimatedBytes = remember(target, cfg) {
-        if (target != null) ExportStudioEngine.estimateOutputBytes(target, cfg) else 8_400_000L
+        if (target != null) ExportStudioEngine.estimateOutputBytes(target, cfg) else 4_200_000L
     }
     val estimatedMb = String.format(Locale.US, "%.1f MB", estimatedBytes / (1024f * 1024f))
 
@@ -643,8 +647,8 @@ private fun ExportStudioCardSheet(
             .widthIn(max = 640.dp)
             .shadow(18.dp, RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
             .border(
-                width = 1.2.dp,
-                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.7f),
+                width = 1.8.dp,
+                color = MaterialTheme.colorScheme.outline,
                 shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
             )
             .testTag("export_settings_sheet")
@@ -662,18 +666,20 @@ private fun ExportStudioCardSheet(
             ) {
                 Column {
                     Text(
-                        text = "Export Settings",
+                        text = if (isVideo) "Video Export Studio" else "Photo Export Studio",
                         style = MaterialTheme.typography.headlineMedium.copy(
                             color = MaterialTheme.colorScheme.onSurface,
-                            fontWeight = FontWeight.Bold
+                            fontWeight = FontWeight.ExtraBold
                         )
                     )
                     if (target != null) {
+                        val badgeType = if (isVideo) "VIDEO" else "PHOTO"
                         Text(
-                            text = "${target.title} • Est. $estimatedMb",
+                            text = "$badgeType • ${target.title} • Est. $estimatedMb",
                             style = MaterialTheme.typography.labelSmall.copy(
                                 fontFamily = JetBrainsMonoFamily,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontWeight = FontWeight.Bold
                             )
                         )
                     }
@@ -694,62 +700,144 @@ private fun ExportStudioCardSheet(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            ExportSummaryRow(
-                label = "Resolution",
-                value = "${cfg.videoResolution.shortLabel} (${cfg.customWidth}×${cfg.customHeight})",
-                onClick = {
-                    val resList = uiState.capabilities.supportedVideoResolutions
-                    val next = resList[(resList.indexOf(cfg.videoResolution) + 1) % resList.size]
-                    viewModel.updateExportConfig {
-                        it.copy(
-                            videoResolution = next,
-                            customWidth = next.width,
-                            customHeight = next.height
-                        )
-                    }
-                },
-                testTag = "export_row_resolution"
-            )
-            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
+            if (isVideo) {
+                // ================= VIDEO EXPORT SETTINGS ONLY =================
+                ExportSummaryRow(
+                    label = "Video Resolution & Size",
+                    value = if (cfg.useCustomVideoSize) {
+                        "Custom (${cfg.customWidth}×${cfg.customHeight})"
+                    } else {
+                        val (vw, vh) = cfg.aspectRatio.computeDimensionsForLongEdge(cfg.videoResolution.longEdge)
+                        "${cfg.videoResolution.shortLabel} (${vw}×${vh} • ${cfg.aspectRatio.label})"
+                    },
+                    onClick = {
+                        val resList = uiState.capabilities.supportedVideoResolutions
+                        val next = resList[(resList.indexOf(cfg.videoResolution) + 1) % resList.size]
+                        val (vw, vh) = cfg.aspectRatio.computeDimensionsForLongEdge(next.longEdge)
+                        viewModel.updateExportConfig {
+                            it.copy(
+                                videoResolution = next,
+                                useCustomVideoSize = false,
+                                customWidth = vw,
+                                customHeight = vh
+                            )
+                        }
+                    },
+                    testTag = "export_row_resolution"
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
 
-            ExportSummaryRow(
-                label = "Frame Rate",
-                value = cfg.videoFps.label,
-                onClick = {
-                    val fpsList = uiState.capabilities.validFpsFor(cfg.videoResolution, cfg.videoCodec)
-                    val next = fpsList[(fpsList.indexOf(cfg.videoFps) + 1) % fpsList.size]
-                    viewModel.updateExportConfig { it.copy(videoFps = next) }
-                },
-                testTag = "export_row_fps"
-            )
-            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
+                ExportSummaryRow(
+                    label = "Video Aspect Ratio",
+                    value = "${cfg.aspectRatio.label} (${cfg.aspectRatio.description})",
+                    onClick = {
+                        val ratios = AspectRatioOption.entries
+                        val nextRatio = ratios[(ratios.indexOf(cfg.aspectRatio) + 1) % ratios.size]
+                        val (vw, vh) = nextRatio.computeDimensionsForLongEdge(cfg.videoResolution.longEdge)
+                        viewModel.updateExportConfig {
+                            it.copy(
+                                aspectRatio = nextRatio,
+                                useCustomVideoSize = false,
+                                customWidth = vw,
+                                customHeight = vh
+                            )
+                        }
+                    },
+                    testTag = "export_row_video_ratio"
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
 
-            ExportSummaryRow(
-                label = "Format",
-                value = if (target?.isVideo == true) cfg.videoCodec.shortName else "${cfg.videoCodec.shortName} / ${cfg.photoFormat.label}",
-                onClick = {
-                    val photoList = uiState.capabilities.supportedPhotoFormats.ifEmpty { PhotoFormat.entries }
-                    val nextPhoto = photoList[(photoList.indexOf(cfg.photoFormat).coerceAtLeast(0) + 1) % photoList.size]
-                    val codecList = uiState.capabilities.supportedCodecs.ifEmpty { listOf(VideoCodecOption.H264) }
-                    val nextCodec = codecList[(codecList.indexOf(cfg.videoCodec).coerceAtLeast(0) + 1) % codecList.size]
-                    viewModel.updateExportConfig {
-                        it.copy(photoFormat = nextPhoto, videoCodec = nextCodec)
-                    }
-                },
-                testTag = "export_row_format"
-            )
-            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
+                ExportSummaryRow(
+                    label = "Frame Rate",
+                    value = cfg.videoFps.label,
+                    onClick = {
+                        val fpsList = uiState.capabilities.validFpsFor(cfg.videoResolution, cfg.videoCodec)
+                        val next = fpsList[(fpsList.indexOf(cfg.videoFps) + 1) % fpsList.size]
+                        viewModel.updateExportConfig { it.copy(videoFps = next) }
+                    },
+                    testTag = "export_row_fps"
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
 
-            ExportSummaryRow(
-                label = "Quality",
-                value = "${cfg.qualityPreset.label} (${cfg.bitrateMbps} Mbps)",
-                onClick = {
-                    val list = ExportQualityPreset.entries
-                    val next = list[(cfg.qualityPreset.ordinal + 1) % list.size]
-                    viewModel.selectExportQualityPreset(next)
-                },
-                testTag = "export_row_quality"
-            )
+                ExportSummaryRow(
+                    label = "Video Codec",
+                    value = cfg.videoCodec.label,
+                    onClick = {
+                        val codecList = uiState.capabilities.supportedCodecs.ifEmpty { listOf(VideoCodecOption.H264) }
+                        val nextCodec = codecList[(codecList.indexOf(cfg.videoCodec).coerceAtLeast(0) + 1) % codecList.size]
+                        viewModel.updateExportConfig { it.copy(videoCodec = nextCodec) }
+                    },
+                    testTag = "export_row_format"
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
+
+                ExportSummaryRow(
+                    label = "Video Bitrate & Quality",
+                    value = "${cfg.qualityPreset.label} (${cfg.bitrateMbps} Mbps)",
+                    onClick = {
+                        val list = ExportQualityPreset.entries
+                        val next = list[(cfg.qualityPreset.ordinal + 1) % list.size]
+                        viewModel.selectExportQualityPreset(next)
+                    },
+                    testTag = "export_row_quality"
+                )
+            } else {
+                // ================= PHOTO EXPORT SETTINGS ONLY =================
+                ExportSummaryRow(
+                    label = "Photo Format",
+                    value = cfg.photoFormat.label,
+                    onClick = {
+                        val photoList = uiState.capabilities.supportedPhotoFormats.ifEmpty { PhotoFormat.entries }
+                        val nextPhoto = photoList[(photoList.indexOf(cfg.photoFormat).coerceAtLeast(0) + 1) % photoList.size]
+                        viewModel.updateExportConfig { it.copy(photoFormat = nextPhoto) }
+                    },
+                    testTag = "export_row_format"
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
+
+                ExportSummaryRow(
+                    label = "Photo Dimensions",
+                    value = "${cfg.customWidth} × ${cfg.customHeight} px (${cfg.aspectRatio.label})",
+                    onClick = {
+                        val list = ExportQualityPreset.entries
+                        val next = list[(cfg.qualityPreset.ordinal + 1) % list.size]
+                        viewModel.selectExportQualityPreset(next)
+                    },
+                    testTag = "export_row_resolution"
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
+
+                ExportSummaryRow(
+                    label = "Photo Aspect Ratio & Crop",
+                    value = "${cfg.aspectRatio.label} (${cfg.aspectRatio.description})",
+                    onClick = {
+                        val ratios = AspectRatioOption.entries
+                        val nextRatio = ratios[(ratios.indexOf(cfg.aspectRatio) + 1) % ratios.size]
+                        val longEdge = maxOf(cfg.customWidth, cfg.customHeight).coerceAtLeast(1080)
+                        val (pw, ph) = nextRatio.computeDimensionsForLongEdge(longEdge)
+                        viewModel.updateExportConfig {
+                            it.copy(
+                                aspectRatio = nextRatio,
+                                customWidth = pw,
+                                customHeight = ph
+                            )
+                        }
+                    },
+                    testTag = "export_row_photo_ratio"
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
+
+                ExportSummaryRow(
+                    label = "Compression Quality",
+                    value = "${cfg.qualityPreset.label} (${cfg.jpegQuality}%)",
+                    onClick = {
+                        val list = ExportQualityPreset.entries
+                        val next = list[(cfg.qualityPreset.ordinal + 1) % list.size]
+                        viewModel.selectExportQualityPreset(next)
+                    },
+                    testTag = "export_row_quality"
+                )
+            }
 
             Row(
                 modifier = Modifier
@@ -769,8 +857,14 @@ private fun ExportStudioCardSheet(
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = if (showAdvancedStudio) "Hide Custom Dimensions & Metadata" else "Custom Dimensions, Crop & Privacy",
-                        style = MaterialTheme.typography.labelLarge
+                        text = if (showAdvancedStudio) {
+                            "Hide Custom Size & Crop Options"
+                        } else if (isVideo) {
+                            "Custom Video Size, Aspect Ratio & Audio"
+                        } else {
+                            "Custom Photo Size, Aspect Ratio & EXIF"
+                        },
+                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
                     )
                 }
 
@@ -778,7 +872,8 @@ private fun ExportStudioCardSheet(
                     text = cfg.aspectRatio.label,
                     style = MaterialTheme.typography.labelMedium.copy(
                         fontFamily = JetBrainsMonoFamily,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = FontWeight.Bold
                     )
                 )
             }
@@ -790,25 +885,44 @@ private fun ExportStudioCardSheet(
                         .padding(vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
+                    Text(
+                        text = if (isVideo) "Video Aspect Ratio (20 Ratios)" else "Photo Aspect Ratio & Crop (20 Ratios)",
+                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
+                    )
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        ExportQualityPreset.entries.forEach { preset ->
+                        AspectRatioOption.entries.forEach { ratio ->
                             FilterChip(
-                                selected = cfg.qualityPreset == preset,
-                                onClick = { viewModel.selectExportQualityPreset(preset) },
-                                label = { Text(preset.label) },
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = MaterialTheme.colorScheme.primary,
-                                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary
-                                )
+                                selected = cfg.aspectRatio == ratio,
+                                onClick = {
+                                    val longEdge = if (isVideo) {
+                                        cfg.videoResolution.longEdge
+                                    } else {
+                                        maxOf(cfg.customWidth, cfg.customHeight).coerceAtLeast(1080)
+                                    }
+                                    val (newW, newH) = ratio.computeDimensionsForLongEdge(longEdge)
+                                    viewModel.updateExportConfig {
+                                        it.copy(
+                                            aspectRatio = ratio,
+                                            useCustomVideoSize = false,
+                                            customWidth = newW,
+                                            customHeight = newH
+                                        )
+                                    }
+                                },
+                                label = { Text(ratio.label) }
                             )
                         }
                     }
 
+                    Text(
+                        text = if (isVideo) "Custom Video Size (px)" else "Custom Photo Size (px)",
+                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
+                    )
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -819,7 +933,12 @@ private fun ExportStudioCardSheet(
                             onValueChange = { txt ->
                                 widthInput = txt.filter { it.isDigit() }
                                 widthInput.toIntOrNull()?.let { w ->
-                                    if (w >= 256) viewModel.setExportCustomDimensions(w, cfg.customHeight)
+                                    if (w >= 256) {
+                                        viewModel.setExportCustomDimensions(w, cfg.customHeight)
+                                        if (isVideo) {
+                                            viewModel.updateExportConfig { it.copy(useCustomVideoSize = true) }
+                                        }
+                                    }
                                 }
                             },
                             label = { Text("Width (px)") },
@@ -847,7 +966,12 @@ private fun ExportStudioCardSheet(
                             onValueChange = { txt ->
                                 heightInput = txt.filter { it.isDigit() }
                                 heightInput.toIntOrNull()?.let { h ->
-                                    if (h >= 256) viewModel.setExportCustomDimensions(cfg.customWidth, h)
+                                    if (h >= 256) {
+                                        viewModel.setExportCustomDimensions(cfg.customWidth, h)
+                                        if (isVideo) {
+                                            viewModel.updateExportConfig { it.copy(useCustomVideoSize = true) }
+                                        }
+                                    }
                                 }
                             },
                             label = { Text("Height (px)") },
@@ -866,7 +990,7 @@ private fun ExportStudioCardSheet(
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text(
-                                text = "Quality Honesty: Target (${cfg.customWidth}×${cfg.customHeight}) exceeds source (${target?.width}×${target?.height}). Upscaling increases pixel dimensions but does not restore missing optical detail.",
+                                text = "Quality Honesty: Target (${cfg.customWidth}×${cfg.customHeight}) exceeds source (${target?.width}×${target?.height}).",
                                 style = MaterialTheme.typography.labelSmall.copy(
                                     color = MaterialTheme.colorScheme.onSurface
                                 ),
@@ -875,52 +999,65 @@ private fun ExportStudioCardSheet(
                         }
                     }
 
-                    Text("Aspect Ratio & Cinematic Crop", style = MaterialTheme.typography.labelLarge)
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        AspectRatioOption.entries.forEach { ratio ->
-                            FilterChip(
-                                selected = cfg.aspectRatio == ratio,
-                                onClick = {
-                                    viewModel.updateExportConfig { it.copy(aspectRatio = ratio) }
-                                },
-                                label = { Text(ratio.label) }
-                            )
-                        }
-                    }
-
-                    LabeledCameraSlider(
-                        label = "Compression Quality",
-                        valueText = "${cfg.jpegQuality}%",
-                        value = cfg.jpegQuality.toFloat(),
-                        valueRange = 20f..100f,
-                        onValueChange = { q ->
-                            viewModel.updateExportConfig { it.copy(jpegQuality = q.roundToInt()) }
-                        }
-                    )
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("Preserve EXIF & Location Metadata", style = MaterialTheme.typography.titleSmall)
-                            Text(
-                                text = if (cfg.preserveMetadata) "Keeps camera & lens EXIF tags" else "Strips location & device tags for privacy",
-                                style = MaterialTheme.typography.labelSmall.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            )
-                        }
-                        Switch(
-                            checked = cfg.preserveMetadata,
-                            onCheckedChange = { checked ->
-                                viewModel.updateExportConfig { it.copy(preserveMetadata = checked) }
+                    if (isVideo) {
+                        LabeledCameraSlider(
+                            label = "Target Video Bitrate",
+                            valueText = "${cfg.bitrateMbps} Mbps",
+                            value = cfg.bitrateMbps.toFloat(),
+                            valueRange = 8f..uiState.capabilities.maxBitrateMbpsFor(cfg.videoResolution, cfg.videoCodec).toFloat(),
+                            onValueChange = { mbps ->
+                                viewModel.updateExportConfig { it.copy(bitrateMbps = mbps.roundToInt()) }
                             }
                         )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Include Recorded Audio Track", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold))
+                                Text(
+                                    text = if (cfg.keepAudio) "Preserves stereo audio stream" else "Exports muted video stream",
+                                    style = MaterialTheme.typography.labelSmall.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                )
+                            }
+                            Switch(
+                                checked = cfg.keepAudio,
+                                onCheckedChange = { checked ->
+                                    viewModel.updateExportConfig { it.copy(keepAudio = checked) }
+                                }
+                            )
+                        }
+                    } else {
+                        LabeledCameraSlider(
+                            label = "Image Compression Quality",
+                            valueText = "${cfg.jpegQuality}%",
+                            value = cfg.jpegQuality.toFloat(),
+                            valueRange = 20f..100f,
+                            onValueChange = { q ->
+                                viewModel.updateExportConfig { it.copy(jpegQuality = q.roundToInt()) }
+                            }
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Preserve EXIF & Camera Metadata", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold))
+                                Text(
+                                    text = if (cfg.preserveMetadata) "Keeps camera & lens EXIF tags" else "Strips device & location tags for privacy",
+                                    style = MaterialTheme.typography.labelSmall.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                )
+                            }
+                            Switch(
+                                checked = cfg.preserveMetadata,
+                                onCheckedChange = { checked ->
+                                    viewModel.updateExportConfig { it.copy(preserveMetadata = checked) }
+                                }
+                            )
+                        }
                     }
                 }
             }
@@ -1131,22 +1268,33 @@ private fun FullScreenMediaViewer(
         }
     }
 
-    // Load persisted high-resolution filtered motion frames for recorded videos so film filters are 100% visible in playback
-    val filteredVideoFrames = remember(item.id, item.filePath, item.isVideo) {
-        if (item.isVideo) MediaGallerySaver.loadVideoFilteredFrames(item.filePath) else emptyList()
+    // Load persisted high-resolution filtered motion frames off the main thread so playback never lags
+    val filteredVideoFrames by produceState(
+        initialValue = emptyList(),
+        key1 = item.id,
+        key2 = item.filePath,
+        key3 = item.isVideo
+    ) {
+        value = if (item.isVideo) {
+            withContext(Dispatchers.IO) {
+                MediaGallerySaver.loadVideoFilteredFrames(item.filePath)
+            }
+        } else {
+            emptyList()
+        }
     }
 
     LaunchedEffect(isPlayingVideo, videoViewRef, filteredVideoFrames.size) {
         while (isPlayingVideo) {
-            delay(140)
+            delay(85)
             if (filteredVideoFrames.isNotEmpty()) {
-                videoProgressSec = if (videoProgressSec + 0.14f >= totalVideoSec) 0f else videoProgressSec + 0.14f
+                videoProgressSec = if (videoProgressSec + 0.085f >= totalVideoSec) 0f else videoProgressSec + 0.085f
             } else {
                 val vv = videoViewRef
                 if (vv != null && runCatching { vv.isPlaying }.getOrDefault(false)) {
                     videoProgressSec = (vv.currentPosition / 1000f).coerceIn(0f, totalVideoSec)
                 } else {
-                    videoProgressSec = if (videoProgressSec + 0.14f >= totalVideoSec) 0f else videoProgressSec + 0.14f
+                    videoProgressSec = if (videoProgressSec + 0.085f >= totalVideoSec) 0f else videoProgressSec + 0.085f
                 }
             }
         }
@@ -1157,11 +1305,21 @@ private fun FullScreenMediaViewer(
         offset = if (scale > 1f) offset + panChange else Offset.Zero
     }
 
-    val fullBitmap = remember(item.id, item.filePath, item.uriString) {
-        ImageFilterEngine.loadBitmapForMediaItem(context, item, 2560, 1920)
+    val fullBitmap by produceState<android.graphics.Bitmap?>(
+        initialValue = null,
+        key1 = item.id,
+        key2 = item.filePath,
+        key3 = item.uriString
+    ) {
+        value = withContext(Dispatchers.IO) {
+            ImageFilterEngine.loadBitmapForMediaItem(context, item, 2560, 1920)
+        }
     }
     val preset = remember(item.appliedPresetId) {
         FilterCatalog.getById(item.appliedPresetId)
+    }
+    val mediaAspectRatio = remember(item.width, item.height) {
+        (item.width.coerceAtLeast(1).toFloat() / item.height.coerceAtLeast(1).toFloat()).coerceIn(0.25f, 4.0f)
     }
 
     // Saved photos & filtered video frames already have `preset` baked in on disk; also support live filter preview or compare original
@@ -1236,7 +1394,7 @@ private fun FullScreenMediaViewer(
             }
         }
 
-        // Center Zoomable Image / High-Res Filtered Video Playback Surface
+        // Center Zoomable Image / High-Res Filtered Video Playback Surface (Aspect-Ratio Locked so Video NEVER Stretches)
         Box(
             contentAlignment = Alignment.Center,
             modifier = Modifier
@@ -1264,52 +1422,68 @@ private fun FullScreenMediaViewer(
                 } else {
                     null
                 }
-                Image(
-                    bitmap = activeVideoFrame.asImageBitmap(),
-                    contentDescription = item.title,
-                    contentScale = ContentScale.Fit,
-                    colorFilter = compareFilter,
+                val frameRatio = (activeVideoFrame.width.coerceAtLeast(1).toFloat() / activeVideoFrame.height.coerceAtLeast(1).toFloat()).coerceIn(0.25f, 4.0f)
+                Box(
+                    contentAlignment = Alignment.Center,
                     modifier = Modifier
                         .fillMaxSize()
-                        .graphicsLayer(
-                            scaleX = scale,
-                            scaleY = scale,
-                            translationX = offset.x,
-                            translationY = offset.y
-                        )
-                )
+                        .padding(horizontal = 8.dp, vertical = 8.dp)
+                ) {
+                    Image(
+                        bitmap = activeVideoFrame.asImageBitmap(),
+                        contentDescription = item.title,
+                        contentScale = ContentScale.Fit,
+                        colorFilter = compareFilter,
+                        modifier = Modifier
+                            .aspectRatio(frameRatio, matchHeightConstraintsFirst = activeVideoFrame.height > activeVideoFrame.width)
+                            .clip(RoundedCornerShape(14.dp))
+                            .graphicsLayer(
+                                scaleX = scale,
+                                scaleY = scale,
+                                translationX = offset.x,
+                                translationY = offset.y
+                            )
+                    )
+                }
             } else if (item.isVideo && mp4File != null && fullBitmap == null) {
-                AndroidView(
-                    factory = { ctx ->
-                        VideoView(ctx).apply {
-                            setVideoURI(Uri.fromFile(mp4File))
-                            setOnPreparedListener { mp ->
-                                mp.isLooping = true
-                                val vol = if (videoMuted) 0f else 1f
-                                mp.setVolume(vol, vol)
-                                if (isPlayingVideo) start()
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .aspectRatio(mediaAspectRatio, matchHeightConstraintsFirst = item.height > item.width)
+                        .clip(RoundedCornerShape(14.dp))
+                ) {
+                    AndroidView(
+                        factory = { ctx ->
+                            VideoView(ctx).apply {
+                                setVideoURI(Uri.fromFile(mp4File))
+                                setOnPreparedListener { mp ->
+                                    mp.isLooping = true
+                                    val vol = if (videoMuted) 0f else 1f
+                                    mp.setVolume(vol, vol)
+                                    if (isPlayingVideo) start()
+                                }
+                                videoViewRef = this
                             }
-                            videoViewRef = this
-                        }
-                    },
-                    update = { vv ->
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                            if (comparingOriginal || preset.id == "original") {
-                                vv.setRenderEffect(null)
-                            } else {
-                                vv.setRenderEffect(
-                                    RenderEffect.createColorFilterEffect(
-                                        ColorMatrixColorFilter(videoAndroidColorMatrix)
+                        },
+                        update = { vv ->
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                                if (comparingOriginal || preset.id == "original") {
+                                    vv.setRenderEffect(null)
+                                } else {
+                                    vv.setRenderEffect(
+                                        RenderEffect.createColorFilterEffect(
+                                            ColorMatrixColorFilter(videoAndroidColorMatrix)
+                                        )
                                     )
-                                )
+                                }
                             }
-                        }
-                    },
-                    modifier = Modifier.fillMaxSize()
-                )
+                        },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
             } else if (fullBitmap != null) {
+                val bmp = fullBitmap!!
                 val photoColorFilter = if (comparingOriginal) {
-                    // Neutralize saturation shift slightly to preview flat sensor baseline
                     ColorFilter.colorMatrix(
                         androidx.compose.ui.graphics.ColorMatrix().apply { setToSaturation(0.88f) }
                     )
@@ -1317,7 +1491,7 @@ private fun FullScreenMediaViewer(
                     null
                 }
                 Image(
-                    bitmap = fullBitmap.asImageBitmap(),
+                    bitmap = bmp.asImageBitmap(),
                     contentDescription = item.title,
                     contentScale = ContentScale.Fit,
                     colorFilter = photoColorFilter,

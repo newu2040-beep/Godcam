@@ -11,6 +11,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -68,6 +69,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.FilterCatalog
 import com.example.data.ImageFilterEngine
+import com.example.model.CompactLayoutMode
 import com.example.model.EditRecipe
 import com.example.model.FilterFamily
 import com.example.model.FilterPreset
@@ -152,12 +154,13 @@ fun FiltersScreen(
             val priorityIds = listOf(
                 "original",
                 "fuji_pro_400h",
+                "pastel_matcha_latte",
                 "kodak_gold_200",
-                "retro_agfa_vista",
+                "pastel_sakura_petal",
                 "kodak_portra_400",
-                "retro_classic",
+                "pastel_peach_sorbet",
                 "cine_still_800t",
-                "retro_vintage",
+                "retro_agfa_vista",
                 "bw_classic"
             )
             val top = priorityIds.mapNotNull { id -> filteredPresets.firstOrNull { it.id == id } }
@@ -168,19 +171,29 @@ fun FiltersScreen(
         }
     }
 
-    Box(
+    val totalCount = FilterCatalog.allPresets.size
+
+    BoxWithConstraints(
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
             .statusBarsPadding()
             .navigationBarsPadding()
     ) {
+        val isCompact = when (uiState.compactLayoutMode) {
+            CompactLayoutMode.COMPACT -> true
+            CompactLayoutMode.COMFORTABLE -> false
+            CompactLayoutMode.AUTO -> maxHeight < 720.dp || maxWidth < 380.dp
+        }
+        val gridColumns = if (maxWidth >= 600.dp || isCompact) 4 else 3
+        val heroHeight = if (isCompact) 156.dp else 202.dp
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .widthIn(max = 640.dp)
+                .widthIn(max = 680.dp)
                 .align(Alignment.Center)
-                .padding(horizontal = 16.dp, vertical = 8.dp)
+                .padding(horizontal = if (isCompact) 12.dp else 16.dp, vertical = if (isCompact) 4.dp else 8.dp)
         ) {
             // 1. BOLD MINIMALIST TOP HEADER ("<"  "Filters"  "Apply / Save")
             Row(
@@ -210,15 +223,16 @@ fun FiltersScreen(
                         text = "Filters",
                         style = MaterialTheme.typography.headlineMedium.copy(
                             color = MaterialTheme.colorScheme.onBackground,
-                            fontWeight = FontWeight.Bold
+                            fontWeight = FontWeight.ExtraBold
                         )
                     )
                     Text(
-                        text = if (uiState.captureMode.isVideo) "ACTIVE FOR PHOTO & VIDEO" else "108 ANALOG & FILM LOOKS",
+                        text = if (uiState.captureMode.isVideo) "ACTIVE FOR PHOTO & VIDEO ($totalCount LOOKS)" else "$totalCount ANALOG & PASTEL LOOKS",
                         style = MaterialTheme.typography.labelSmall.copy(
                             fontFamily = JetBrainsMonoFamily,
                             fontSize = 9.5.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontWeight = FontWeight.Bold,
                             letterSpacing = 0.8.sp
                         )
                     )
@@ -236,7 +250,7 @@ fun FiltersScreen(
                     ) {
                         Icon(
                             imageVector = if (showSearchBar) Icons.Outlined.Close else Icons.Outlined.Search,
-                            contentDescription = "Search 108 Presets",
+                            contentDescription = "Search $totalCount Presets",
                             tint = MaterialTheme.colorScheme.onBackground,
                             modifier = Modifier.size(20.dp)
                         )
@@ -279,7 +293,7 @@ fun FiltersScreen(
                 OutlinedTextField(
                     value = uiState.filterSearchQuery,
                     onValueChange = { viewModel.setFilterSearchQuery(it) },
-                    placeholder = { Text("Search 108 looks (e.g. Fuji, Portra, Noir, Neon)…") },
+                    placeholder = { Text("Search $totalCount looks (e.g. Pastel, Fuji, Portra, Noir)…") },
                     singleLine = true,
                     shape = RoundedCornerShape(50),
                     colors = OutlinedTextFieldDefaults.colors(
@@ -293,15 +307,15 @@ fun FiltersScreen(
                 )
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(if (isCompact) 6.dp else 8.dp))
 
             // 2. LARGE REAL-TIME HERO PREVIEW CARD
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(210.dp)
+                    .height(heroHeight)
                     .clip(RoundedCornerShape(18.dp))
-                    .border(1.2.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.7f), RoundedCornerShape(18.dp))
+                    .border(1.8.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(18.dp))
                     .testTag("filters_hero_preview")
             ) {
                 Image(
@@ -487,12 +501,12 @@ fun FiltersScreen(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // 4. 3-COLUMN RESPONSIVE PRESET GRID (108 Distinct Presets)
+            // 4. RESPONSIVE PRESET GRID (166 Distinct Presets)
             LazyVerticalGrid(
-                columns = GridCells.Fixed(3),
+                columns = GridCells.Fixed(gridColumns),
                 contentPadding = PaddingValues(bottom = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(if (isCompact) 8.dp else 10.dp),
+                verticalArrangement = Arrangement.spacedBy(if (isCompact) 10.dp else 12.dp),
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)

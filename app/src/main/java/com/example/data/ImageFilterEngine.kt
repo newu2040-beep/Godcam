@@ -189,8 +189,24 @@ object ImageFilterEngine {
         val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
         paint.colorFilter = ColorMatrixColorFilter(buildAndroidColorMatrix(preset, recipe, extraEv))
 
+        // Always center-crop source rect to match finalW:finalH so output never stretches
+        val srcRatio = cropped.width.toFloat() / cropped.height.coerceAtLeast(1).toFloat()
+        val dstRatio = finalW.toFloat() / finalH.coerceAtLeast(1).toFloat()
+        val srcRect = if (abs(srcRatio - dstRatio) > 0.015f) {
+            if (srcRatio > dstRatio) {
+                val cropW = (cropped.height * dstRatio).roundToInt().coerceIn(1, cropped.width)
+                val left = ((cropped.width - cropW) / 2).coerceAtLeast(0)
+                android.graphics.Rect(left, 0, left + cropW, cropped.height)
+            } else {
+                val cropH = (cropped.width / dstRatio).roundToInt().coerceIn(1, cropped.height)
+                val top = ((cropped.height - cropH) / 2).coerceAtLeast(0)
+                android.graphics.Rect(0, top, cropped.width, top + cropH)
+            }
+        } else {
+            null
+        }
         val dstRect = RectF(0f, 0f, finalW.toFloat(), finalH.toFloat())
-        canvas.drawBitmap(cropped, null, dstRect, paint)
+        canvas.drawBitmap(cropped, srcRect, dstRect, paint)
 
         // Apply optical vignette if active
         val t = if (preset.id == "original") 0f else recipe.intensity.coerceIn(0f, 1f)

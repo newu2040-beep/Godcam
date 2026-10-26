@@ -1,6 +1,7 @@
 package com.example.model
 
 import androidx.compose.runtime.Immutable
+import kotlin.math.roundToInt
 
 enum class CaptureMode(val label: String, val isVideo: Boolean, val isPro: Boolean) {
     PHOTO("Photo", isVideo = false, isPro = false),
@@ -8,6 +9,12 @@ enum class CaptureMode(val label: String, val isVideo: Boolean, val isPro: Boole
     PRO_PHOTO("Pro Photo", isVideo = false, isPro = true),
     PRO_VIDEO("Pro Video", isVideo = true, isPro = true),
     NIGHT("Night", isVideo = false, isPro = false)
+}
+
+enum class CompactLayoutMode(val label: String, val shortLabel: String, val description: String) {
+    AUTO("Auto Adaptive", "Auto", "Automatically scales controls for small and large displays"),
+    COMPACT("Compact Mode", "Compact", "Dense, one-handed pro layout with maximum viewfinder area"),
+    COMFORTABLE("Spacious Mode", "Spacious", "Larger controls and generous spacing for big screens")
 }
 
 enum class AspectRatioOption(
@@ -18,17 +25,41 @@ enum class AspectRatioOption(
     val description: String
 ) {
     RATIO_4_3("4:3", 4f, 3f, false, "Full Sensor Native (Photo default)"),
-    RATIO_3_2("3:2", 3f, 2f, false, "Classic 35mm Film Frame (Crop)"),
-    RATIO_16_9("16:9", 16f, 9f, false, "Widescreen HD/4K Native"),
-    RATIO_1_1("1:1", 1f, 1f, false, "Square Medium-Format Crop"),
-    RATIO_4_5("4:5", 4f, 5f, false, "Editorial Portrait Crop"),
-    RATIO_9_16("9:16", 9f, 16f, false, "Vertical Full-Frame Story"),
-    GUIDE_2_00("2.00:1", 2.0f, 1f, true, "Univisium 2:1 Viewfinder Guide / Export Crop"),
-    GUIDE_2_20("2.20:1", 2.2f, 1f, true, "70mm Todd-AO Viewfinder Guide / Export Crop"),
-    GUIDE_2_35("2.35:1", 2.35f, 1f, true, "Anamorphic Scope Guide / Export Crop"),
-    GUIDE_2_39("2.39:1", 2.39f, 1f, true, "Modern DCI Scope Guide / Export Crop");
+    RATIO_3_4("3:4", 3f, 4f, false, "Vertical Full Sensor Portrait"),
+    RATIO_16_9("16:9", 16f, 9f, false, "Widescreen HD / 4K Native"),
+    RATIO_9_16("9:16", 9f, 16f, false, "Vertical Full-Frame Cinema / Story"),
+    RATIO_3_2("3:2", 3f, 2f, false, "Classic 35mm Film Frame"),
+    RATIO_2_3("2:3", 2f, 3f, false, "Vertical 35mm Portrait Frame"),
+    RATIO_1_1("1:1", 1f, 1f, false, "Square Medium-Format 6×6"),
+    RATIO_4_5("4:5", 4f, 5f, false, "Editorial Portrait 4×5"),
+    RATIO_5_4("5:4", 5f, 4f, false, "Large-Format 5×4 Landscape"),
+    RATIO_6_7("6:7", 6f, 7f, false, "Medium-Format 6×7 Portrait"),
+    RATIO_7_6("7:6", 7f, 6f, false, "Medium-Format 7×6 Landscape"),
+    RATIO_18_9("18:9", 18f, 9f, false, "Modern Mobile Full-Display 2:1"),
+    RATIO_21_9("21:9", 21f, 9f, true, "Ultra-Wide Cinema 21:9"),
+    GUIDE_1_85("1.85:1", 1.85f, 1f, true, "Academy Flat Theatrical Widescreen"),
+    GUIDE_2_00("2.00:1", 2.0f, 1f, true, "Univisium 2:1 Widescreen Crop"),
+    GUIDE_2_20("2.20:1", 2.2f, 1f, true, "70mm Todd-AO Widescreen Crop"),
+    GUIDE_2_35("2.35:1", 2.35f, 1f, true, "Anamorphic Scope 2.35:1 Crop"),
+    GUIDE_2_39("2.39:1", 2.39f, 1f, true, "Modern DCI Scope 2.39:1 Crop"),
+    GUIDE_2_76("2.76:1", 2.76f, 1f, true, "Ultra Panavision 70mm 2.76:1 Crop"),
+    XPAN_65_24("65:24", 65f, 24f, true, "Panoramic XPan 65×24mm Format");
 
     val aspectValue: Float get() = widthRatio / heightRatio
+
+    fun computeDimensionsForLongEdge(longEdge: Int): Pair<Int, Int> {
+        val safeLong = longEdge.coerceIn(320, 7680).let { if (it % 2 != 0) it + 1 else it }
+        val ratio = aspectValue
+        return if (ratio >= 1f) {
+            val w = safeLong
+            val h = ((w / ratio).roundToInt().coerceAtLeast(240)).let { if (it % 2 != 0) it + 1 else it }
+            w to h
+        } else {
+            val h = safeLong
+            val w = ((h * ratio).roundToInt().coerceAtLeast(240)).let { if (it % 2 != 0) it + 1 else it }
+            w to h
+        }
+    }
 }
 
 enum class GridMode(val label: String) {
@@ -72,7 +103,9 @@ enum class VideoResolution(
     FHD_1080P("1080p", "1080p (1920×1080)", 1920, 1080, false),
     UHD_4K("4K", "4K (3840×2160)", 3840, 2160, true),
     DCI_4K("DCI 4K", "DCI 4K (4096×2160)", 4096, 2160, true),
-    UHD_8K("8K", "8K (7680×4320)", 7680, 4320, true)
+    UHD_8K("8K", "8K (7680×4320)", 7680, 4320, true);
+
+    val longEdge: Int get() = maxOf(width, height)
 }
 
 enum class VideoFps(val fps: Int, val label: String) {
@@ -246,7 +279,7 @@ enum class ExportQualityPreset(
     BALANCED("Balanced", "Everyday use", "Good quality and moderate size", 88, 28),
     HIGH("High", "Best practical quality", "Higher quality and larger output", 95, 65),
     MAXIMUM("Maximum / Original", "Preservation", "Original stream or highest valid output", 100, 100),
-    CUSTOM("Custom", "Power users", "Manual dimensions, codec, FPS and bitrate", 92, 45)
+    CUSTOM("Custom", "Power users", "Manual dimensions, codec, FPS and bitrate", 96, 48)
 }
 
 enum class AppThemeOption(
@@ -261,80 +294,144 @@ enum class AppThemeOption(
     CREAM_MINT(
         "cream_mint",
         "Cream Mint",
-        "Warm cream, subtle mint, deep green-black (Default)",
-        0xFFF7F3E9,
-        0xFF8EB8A5,
-        0xFF20332D,
+        "Warm cream, bold mint, deep forest ink (Default)",
+        0xFFF6F1E6,
+        0xFF72AE95,
+        0xFF14241E,
+        isDark = false
+    ),
+    PASTEL_MATCHA(
+        "pastel_matcha",
+        "Pastel Matcha",
+        "Creamy Kyoto matcha pastel with high-contrast forest ink",
+        0xFFF1F7ED,
+        0xFF7EC084,
+        0xFF122616,
+        isDark = false
+    ),
+    PASTEL_PEACH(
+        "pastel_peach",
+        "Pastel Peach",
+        "Soft apricot-peach pastel with bold espresso contrast",
+        0xFFFFF3EC,
+        0xFFF09C7E,
+        0xFF2B150E,
+        isDark = false
+    ),
+    PASTEL_SAKURA(
+        "pastel_sakura",
+        "Pastel Sakura",
+        "Blossom pink pastel with deep plum-charcoal contrast",
+        0xFFFFF1F5,
+        0xFFE68EAD,
+        0xFF2B101B,
+        isDark = false
+    ),
+    PASTEL_BUTTER(
+        "pastel_butter",
+        "Pastel Butter",
+        "Sunlit buttercup pastel with deep umber typography",
+        0xFFFFFAE6,
+        0xFFE2BA4C,
+        0xFF281F06,
+        isDark = false
+    ),
+    PASTEL_SKY(
+        "pastel_sky",
+        "Pastel Sky",
+        "Airy powder blue pastel with crisp midnight-navy ink",
+        0xFFEDF5FF,
+        0xFF79ADE6,
+        0xFF0E2036,
+        isDark = false
+    ),
+    PASTEL_LILAC(
+        "pastel_lilac",
+        "Pastel Lilac",
+        "Dreamy wisteria lilac pastel with bold indigo contrast",
+        0xFFF5EEFF,
+        0xFFAC8BE6,
+        0xFF1F1135,
+        isDark = false
+    ),
+    PASTEL_PISTACHIO(
+        "pastel_pistachio",
+        "Pastel Pistachio",
+        "Artisanal pistachio gelato with deep obsidian-green ink",
+        0xFFECF8F1,
+        0xFF6EC498,
+        0xFF0E261A,
         isDark = false
     ),
     PAPER_SAGE(
         "paper_sage",
         "Paper Sage",
-        "Paper white and muted sage",
+        "Crisp gallery paper and high-contrast sage",
         0xFFFAF9F5,
-        0xFF7B9A8B,
-        0xFF1E2D27,
+        0xFF688E7C,
+        0xFF14221D,
         isDark = false
     ),
     OCEAN(
         "ocean",
-        "Ocean",
-        "Pale blue and restrained teal",
-        0xFFF0F5F7,
-        0xFF6B9EAD,
-        0xFF1A2E35,
+        "Ocean Mist",
+        "Nordic seafoam blue and deep slate teal",
+        0xFFEEF4F7,
+        0xFF5A93A4,
+        0xFF12242B,
         isDark = false
     ),
     LAVENDER_MIST(
         "lavender_mist",
         "Lavender Mist",
-        "Quiet lavender and neutral gray",
-        0xFFF4F2F7,
-        0xFF988EB8,
-        0xFF282334,
+        "Muted botanical lavender and deep slate",
+        0xFFF3F0F7,
+        0xFF8C80B0,
+        0xFF1E192B,
         isDark = false
     ),
     SUNSET_SAND(
         "sunset_sand",
         "Sunset Sand",
-        "Warm sand and muted terracotta",
-        0xFFF8F1E7,
-        0xFFC98A70,
-        0xFF33231D,
+        "Warm desert sand and bold terracotta",
+        0xFFF8EFE4,
+        0xFFC47D60,
+        0xFF291A14,
         isDark = false
     ),
     GRAPHITE(
         "graphite",
-        "Graphite",
-        "Dark graphite with mint accents",
-        0xFF1D2220,
+        "Graphite Pro",
+        "High-contrast dark graphite with luminous mint accents",
+        0xFF161B19,
         0xFF8EB8A5,
-        0xFFF2F5F3,
+        0xFFF5F8F6,
         isDark = true
     ),
     MIDNIGHT(
         "midnight",
-        "Midnight",
-        "Deep dark surfaces and accessible contrast",
-        0xFF101513,
+        "Midnight OLED",
+        "Deep obsidian dark surfaces with sharp emerald contrast",
+        0xFF0B0F0E,
         0xFF7AB39B,
-        0xFFF7F9F8,
+        0xFFFAFCFB,
         isDark = true
     ),
     SYSTEM(
         "system",
-        "System",
-        "Follow Android light/dark preference",
-        0xFFF7F3E9,
-        0xFF8EB8A5,
-        0xFF20332D,
+        "System Auto",
+        "Follow Android device light/dark preference",
+        0xFFF6F1E6,
+        0xFF72AE95,
+        0xFF14241E,
         isDark = false
     )
 }
 
 enum class FilterFamily(val displayName: String, val shortChip: String, val lookDirection: String) {
-    ALL("All Looks", "All", "Complete catalog of 108 film-inspired presets"),
+    ALL("All Looks", "All", "Complete catalog of 165+ film, analog, and pastel presets"),
     FAVORITES("Favorites", "Saved", "Your starred presets for instant access"),
+    PASTEL("Pastel & Airy", "Pastel", "Soft pastel tones, creamy highlights, dreamy editorial color"),
     FUJI("Fuji-Inspired", "Fuji", "Soft greens, airy portraits, cinematic tones"),
     KODAK("Kodak-Inspired", "Kodak", "Warm highlights, nostalgic color, rich skin tones"),
     RETRO("Retro / Vintage", "Retro", "Faded color, analog warmth, optional edge effects"),
@@ -430,7 +527,7 @@ data class HardwareCapabilities(
     val totalStorageMb: Long = 0L,
     val batteryTempCelsius: Float = 0f,
     val batteryPercent: Int = 100,
-    val thermalStatusLabel: String = "Active"
+    val thermalStatusLabel: String = "Nominal"
 ) {
     fun validFpsFor(resolution: VideoResolution, codec: VideoCodecOption): List<VideoFps> {
         val base = supportedFpsChoices.ifEmpty { listOf(VideoFps.FPS_24, VideoFps.FPS_30) }
@@ -477,6 +574,7 @@ data class ExportConfig(
     val qualityPreset: ExportQualityPreset = ExportQualityPreset.HIGH,
     val customWidth: Int = 1920,
     val customHeight: Int = 1080,
+    val useCustomVideoSize: Boolean = false,
     val lockAspectRatio: Boolean = true,
     val aspectRatio: AspectRatioOption = AspectRatioOption.RATIO_4_3,
     val photoFormat: PhotoFormat = PhotoFormat.JPEG,

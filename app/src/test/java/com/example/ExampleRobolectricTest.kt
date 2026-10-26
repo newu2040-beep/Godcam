@@ -26,11 +26,21 @@ class ExampleRobolectricTest {
         val appName = context.getString(R.string.app_name)
         assertEquals("GODCAM", appName)
 
-        // Verify 100+ unique presets exist with unique IDs and names
+        // Verify 160+ unique presets exist with unique IDs and names
         val presets = FilterCatalog.allPresets
-        assertTrue("Expected at least 100 presets, got ${presets.size}", presets.size >= 100)
+        assertTrue("Expected at least 160 presets, got ${presets.size}", presets.size >= 160)
         assertEquals(presets.size, presets.map { it.id }.toSet().size)
         assertEquals(presets.size, presets.map { it.name }.toSet().size)
+
+        // Verify 20 aspect ratios and non-stretching dimension calculation
+        assertTrue(com.example.model.AspectRatioOption.entries.size >= 20)
+        val portrait916 = com.example.model.AspectRatioOption.RATIO_9_16.computeDimensionsForLongEdge(1920)
+        assertEquals(1080 to 1920, portrait916)
+        val landscape169 = com.example.model.AspectRatioOption.RATIO_16_9.computeDimensionsForLongEdge(1920)
+        assertEquals(1920 to 1080, landscape169)
+
+        // Verify 15 themes including Pastel themes
+        assertTrue(com.example.model.AppThemeOption.entries.size >= 15)
 
         // Verify ColorMatrix calculation for Fuji Pro 400H
         val fuji = FilterCatalog.getById("fuji_pro_400h")

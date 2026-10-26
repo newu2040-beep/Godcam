@@ -17,6 +17,7 @@ import androidx.room.RoomDatabase
 import com.example.model.AppThemeOption
 import com.example.model.AspectRatioOption
 import com.example.model.AudioRecordingFormat
+import com.example.model.CompactLayoutMode
 import com.example.model.GridMode
 import com.example.model.MediaItemModel
 import com.example.model.PhotoFormat
@@ -133,6 +134,7 @@ abstract class AppDatabase : RoomDatabase() {
 
 data class UserPreferencesState(
     val theme: AppThemeOption = AppThemeOption.CREAM_MINT,
+    val compactLayoutMode: CompactLayoutMode = CompactLayoutMode.AUTO,
     val defaultGrid: GridMode = GridMode.THREE_BY_THREE,
     val defaultRatio: AspectRatioOption = AspectRatioOption.RATIO_4_3,
     val defaultPhotoFormat: PhotoFormat = PhotoFormat.JPEG,
@@ -148,6 +150,7 @@ class GodcamRepository(
 ) {
     private object Keys {
         val THEME = stringPreferencesKey("theme_id")
+        val COMPACT_MODE = stringPreferencesKey("compact_layout_mode")
         val GRID = stringPreferencesKey("grid_mode")
         val RATIO = stringPreferencesKey("default_ratio")
         val FORMAT = stringPreferencesKey("default_photo_format")
@@ -168,6 +171,8 @@ class GodcamRepository(
     val preferencesFlow: Flow<UserPreferencesState> = context.dataStore.data.map { prefs ->
         val themeId = prefs[Keys.THEME] ?: AppThemeOption.CREAM_MINT.id
         val theme = AppThemeOption.entries.firstOrNull { it.id == themeId } ?: AppThemeOption.CREAM_MINT
+        val compactName = prefs[Keys.COMPACT_MODE] ?: CompactLayoutMode.AUTO.name
+        val compactMode = CompactLayoutMode.entries.firstOrNull { it.name == compactName } ?: CompactLayoutMode.AUTO
         val gridName = prefs[Keys.GRID] ?: GridMode.THREE_BY_THREE.name
         val grid = GridMode.entries.firstOrNull { it.name == gridName } ?: GridMode.THREE_BY_THREE
         val ratioName = prefs[Keys.RATIO] ?: AspectRatioOption.RATIO_4_3.name
@@ -180,6 +185,7 @@ class GodcamRepository(
         val audioFmt = AudioRecordingFormat.entries.firstOrNull { it.name == audioName } ?: AudioRecordingFormat.AAC_LC_STEREO_48K
         UserPreferencesState(
             theme = theme,
+            compactLayoutMode = compactMode,
             defaultGrid = grid,
             defaultRatio = ratio,
             defaultPhotoFormat = format,
@@ -192,6 +198,10 @@ class GodcamRepository(
 
     suspend fun setTheme(theme: AppThemeOption) {
         context.dataStore.edit { it[Keys.THEME] = theme.id }
+    }
+
+    suspend fun setCompactLayoutMode(mode: CompactLayoutMode) {
+        context.dataStore.edit { it[Keys.COMPACT_MODE] = mode.name }
     }
 
     suspend fun setGridMode(grid: GridMode) {

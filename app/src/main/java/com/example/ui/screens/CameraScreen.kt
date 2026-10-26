@@ -14,6 +14,10 @@ import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -42,6 +46,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AspectRatio
@@ -72,7 +77,9 @@ import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -97,6 +104,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -106,17 +114,15 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
-import androidx.compose.material.icons.automirrored.outlined.VolumeOff
-import androidx.compose.material.icons.automirrored.outlined.VolumeUp
 import com.example.data.FilterCatalog
 import com.example.data.ImageFilterEngine
 import com.example.model.AspectRatioOption
 import com.example.model.AudioRecordingFormat
 import com.example.model.CaptureMode
+import com.example.model.CompactLayoutMode
 import com.example.model.FlashModeOption
 import com.example.model.MediaItemModel
 import com.example.model.PhotoFormat
-import com.example.model.ShutterSoundStyle
 import com.example.model.StabilizationMode
 import com.example.model.TimerOption
 import com.example.model.VideoCodecOption
@@ -194,25 +200,16 @@ fun CameraScreen(
         }
     }
 
-    // Capture high-resolution live camera motion frames while video recording is active for H.264 MP4 encoding
+    // Capture live camera frames while video recording is active without UI-thread scaling or aspect-ratio stretching
     LaunchedEffect(uiState.isRecordingVideo, previewViewRef) {
         if (uiState.isRecordingVideo) {
             recordedMotionFrames.clear()
-            val targetW = uiState.videoResolution.width.coerceIn(1280, 1920)
-            val targetH = uiState.videoResolution.height.coerceIn(720, 1080)
             while (uiState.isRecordingVideo) {
                 val frame = runCatching { previewViewRef?.bitmap }.getOrNull()
                 if (frame != null && recordedMotionFrames.size < 24) {
-                    val highResFrame = runCatching {
-                        if (frame.width < targetW || frame.height < targetH) {
-                            Bitmap.createScaledBitmap(frame, targetW, targetH, true)
-                        } else {
-                            frame
-                        }
-                    }.getOrDefault(frame)
-                    recordedMotionFrames.add(highResFrame)
+                    recordedMotionFrames.add(frame)
                 }
-                delay(180)
+                delay(160)
             }
         }
     }
@@ -357,18 +354,28 @@ fun CameraScreen(
             .navigationBarsPadding()
     ) {
         val isExpandedWidth = maxWidth >= 680.dp
+        val isCompact = when (uiState.compactLayoutMode) {
+            CompactLayoutMode.COMPACT -> true
+            CompactLayoutMode.COMFORTABLE -> false
+            CompactLayoutMode.AUTO -> maxHeight < 710.dp || maxWidth < 380.dp
+        }
+        val (effectiveVidW, effectiveVidH) = uiState.effectiveVideoDimensions()
 
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .widthIn(max = if (isExpandedWidth) 640.dp else 560.dp)
+                .widthIn(max = if (isExpandedWidth) 660.dp else 560.dp)
                 .align(Alignment.Center)
-                .padding(horizontal = 14.dp, vertical = 6.dp),
+                .padding(
+                    horizontal = if (isCompact) 10.dp else 14.dp,
+                    vertical = if (isCompact) 4.dp else 6.dp
+                ),
             verticalArrangement = Arrangement.SpaceBetween
         ) {
             // 1. BOLD MINIMALIST TOP CAMERA CONTROL BAR
             CameraTopBar(
                 uiState = uiState,
+                isCompact = isCompact,
                 onOpenMoreSheet = { showMoreToolsSheet = true },
                 onToggleProMode = {
                     val next = when (uiState.captureMode) {
@@ -385,19 +392,19 @@ fun CameraScreen(
                 onOpenSettings = { viewModel.navigateTo(AppDestination.SETTINGS) }
             )
 
-            Spacer(modifier = Modifier.height(6.dp))
+            Spacer(modifier = Modifier.height(if (isCompact) 4.dp else 6.dp))
 
-            // 2. HERO VIEWFINDER CARD (Live CameraX + Real-Time GPU Filter Matrix + Hardware Telemetry)
+            // 2. CLEAN MINIMAL HERO VIEWFINDER CARD
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    .clip(RoundedCornerShape(22.dp))
+                    .clip(RoundedCornerShape(if (isCompact) 18.dp else 22.dp))
                     .background(Color(0xFF0E1512))
                     .border(
-                        width = 1.2.dp,
-                        color = if (uiState.isRecordingVideo) GodcamRecordRed else MaterialTheme.colorScheme.outline.copy(alpha = 0.65f),
-                        shape = RoundedCornerShape(22.dp)
+                        width = if (uiState.isRecordingVideo) 2.2.dp else 1.8.dp,
+                        color = if (uiState.isRecordingVideo) GodcamRecordRed else MaterialTheme.colorScheme.outline,
+                        shape = RoundedCornerShape(if (isCompact) 18.dp else 22.dp)
                     )
                     .pointerInput(Unit) {
                         detectTapGestures(
@@ -523,11 +530,11 @@ fun CameraScreen(
                     deviceTiltDegrees = uiState.deviceTiltDegrees
                 )
 
-                // Top-left Viewfinder Badges (Format/Audio + Active Film Filter + Fuji Shutter Sound Toggle + AE/AF Lock)
+                // Clean, Minimal Top-Left Viewfinder Badges (Format/Size + Active Filter + AE/AF Lock)
                 Row(
                     modifier = Modifier
                         .align(Alignment.TopStart)
-                        .padding(12.dp)
+                        .padding(10.dp)
                         .horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically
@@ -540,64 +547,50 @@ fun CameraScreen(
                                 viewModel.setPhotoFormat(nextFmt)
                             },
                             shape = RoundedCornerShape(50),
-                            color = Color(0xBB101915),
+                            color = Color(0xCC101915),
                             contentColor = Color(0xFFFCFBF7),
-                            modifier = Modifier.border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(50))
+                            modifier = Modifier.border(1.2.dp, Color.White.copy(alpha = 0.24f), RoundedCornerShape(50))
                         ) {
                             Text(
-                                text = uiState.photoFormat.label,
+                                text = "${uiState.photoFormat.label} · ${uiState.aspectRatio.label}",
                                 style = MaterialTheme.typography.labelSmall.copy(
                                     fontFamily = JetBrainsMonoFamily,
                                     fontWeight = FontWeight.Bold,
-                                    letterSpacing = 0.6.sp
+                                    letterSpacing = 0.5.sp
                                 ),
-                                modifier = Modifier.padding(horizontal = 11.dp, vertical = 5.dp)
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
                             )
                         }
                     } else {
-                        // Video Mode Hardware Audio Format Quick Pill
+                        // Video Size & Aspect Ratio Badge (Tapping opens Ratio & Custom Video Size Sheet)
                         Surface(
-                            onClick = {
-                                val audioList = uiState.capabilities.supportedAudioFormats
-                                val nextAudio = audioList[(audioList.indexOf(uiState.audioRecordingFormat) + 1) % audioList.size]
-                                viewModel.setAudioRecordingFormat(nextAudio)
-                            },
+                            onClick = { showRatioDialogSheet = true },
                             shape = RoundedCornerShape(50),
-                            color = if (uiState.audioMuted) Color(0xBB3A1B1B) else Color(0xBB101915),
+                            color = Color(0xCC101915),
                             contentColor = Color(0xFFFCFBF7),
                             modifier = Modifier
-                                .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(50))
-                                .testTag("viewfinder_audio_format_chip")
+                                .border(1.2.dp, Color.White.copy(alpha = 0.24f), RoundedCornerShape(50))
+                                .testTag("viewfinder_video_size_chip")
                         ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
+                            Text(
+                                text = "${effectiveVidW}×${effectiveVidH} · ${uiState.aspectRatio.label}",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontFamily = JetBrainsMonoFamily,
+                                    fontWeight = FontWeight.Bold
+                                ),
                                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
-                            ) {
-                                Icon(
-                                    imageVector = if (uiState.audioMuted) Icons.Outlined.MicOff else Icons.Outlined.Mic,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(12.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    text = uiState.audioRecordingFormat.shortBadge,
-                                    style = MaterialTheme.typography.labelSmall.copy(
-                                        fontFamily = JetBrainsMonoFamily,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                )
-                            }
+                            )
                         }
                     }
 
-                    // Active Filter Chip in Viewfinder (Works in BOTH Photo & Video modes!)
+                    // Active Filter Chip in Viewfinder (Works in BOTH Photo & Video modes)
                     Surface(
                         onClick = { viewModel.toggleLiveFilterStrip() },
                         shape = RoundedCornerShape(50),
-                        color = if (uiState.activeRecipe.presetId != "original") GodcamForestActive.copy(alpha = 0.92f) else Color(0xBB101915),
+                        color = if (uiState.activeRecipe.presetId != "original") GodcamForestActive.copy(alpha = 0.94f) else Color(0xCC101915),
                         contentColor = if (uiState.activeRecipe.presetId != "original") Color(0xFFFCFBF7) else GodcamMintAccent,
                         modifier = Modifier
-                            .border(1.dp, GodcamMintAccent.copy(alpha = 0.4f), RoundedCornerShape(50))
+                            .border(1.2.dp, GodcamMintAccent.copy(alpha = 0.45f), RoundedCornerShape(50))
                             .testTag("viewfinder_active_filter_chip")
                     ) {
                         Row(
@@ -612,42 +605,11 @@ fun CameraScreen(
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
                                 text = if (uiState.activeRecipe.presetId == "original") {
-                                    "Look: Original"
+                                    "Filter"
                                 } else {
-                                    "${activePreset.name} ${(uiState.activeRecipe.intensity * 100).roundToInt()}%"
+                                    activePreset.name
                                 },
                                 style = MaterialTheme.typography.labelSmall.copy(
-                                    fontWeight = FontWeight.Bold
-                                )
-                            )
-                        }
-                    }
-
-                    // Fuji / Digital Shutter Sound Quick On/Off & Style Badge
-                    val soundOff = uiState.shutterSoundStyle == ShutterSoundStyle.OFF
-                    Surface(
-                        onClick = { viewModel.toggleShutterSoundOnOff() },
-                        shape = RoundedCornerShape(50),
-                        color = if (soundOff) Color(0xBB101915) else Color(0xCC1C2E27),
-                        contentColor = if (soundOff) Color(0xFFB5C4BD) else GodcamMintAccent,
-                        modifier = Modifier
-                            .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(50))
-                            .testTag("viewfinder_shutter_sound_chip")
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)
-                        ) {
-                            Icon(
-                                imageVector = if (soundOff) Icons.AutoMirrored.Outlined.VolumeOff else Icons.AutoMirrored.Outlined.VolumeUp,
-                                contentDescription = "Shutter Sound Toggle",
-                                modifier = Modifier.size(12.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = uiState.shutterSoundStyle.shortBadge,
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    fontFamily = JetBrainsMonoFamily,
                                     fontWeight = FontWeight.Bold
                                 )
                             )
@@ -680,15 +642,12 @@ fun CameraScreen(
                     }
                 }
 
-                // Top-Center Video / Pro Telemetry Pill ("4K · 60fps · 100Mbps")
-                if (uiState.captureMode.isVideo || isProPhotoStyle) {
-                    val telemetryText = if (uiState.captureMode.isVideo) {
-                        val recPrefix = if (uiState.isRecordingVideo) {
-                            val mins = uiState.recordingElapsedSec / 60
-                            val secs = uiState.recordingElapsedSec % 60
-                            String.format(Locale.US, "REC %02d:%02d • ", mins, secs)
-                        } else ""
-                        "$recPrefix${uiState.videoResolution.shortLabel} (${uiState.videoResolution.width}×${uiState.videoResolution.height}) · ${uiState.videoFps.fps}fps"
+                // Active Video Recording Pill (Only shown while actively recording or in Pro Photo mode)
+                if (uiState.isRecordingVideo || isProPhotoStyle) {
+                    val telemetryText = if (uiState.isRecordingVideo) {
+                        val mins = uiState.recordingElapsedSec / 60
+                        val secs = uiState.recordingElapsedSec % 60
+                        String.format(Locale.US, "REC %02d:%02d • %d×%d • %dfps", mins, secs, effectiveVidW, effectiveVidH, uiState.videoFps.fps)
                     } else {
                         val isoVal = if (uiState.isAutoIso) "ISO Auto" else "ISO ${uiState.manualIso}"
                         val shutVal = if (uiState.isAutoShutter) "Auto S" else "1/${uiState.shutterDenominator}s"
@@ -706,7 +665,7 @@ fun CameraScreen(
                         contentColor = Color(0xFFFCFBF7),
                         modifier = Modifier
                             .align(Alignment.TopCenter)
-                            .padding(top = 44.dp)
+                            .padding(top = 42.dp)
                     ) {
                         Text(
                             text = if (uiState.isRecordingVideo) "$telemetryText • STOP" else telemetryText,
@@ -720,56 +679,15 @@ fun CameraScreen(
                     }
                 }
 
-                // Top-right Live Histogram or Aspect Ratio Guide Badge
-                Column(
-                    horizontalAlignment = Alignment.End,
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(12.dp)
-                ) {
-                    if (uiState.aspectRatio.isCinematicGuide) {
-                        Surface(
-                            shape = RoundedCornerShape(50),
-                            color = Color(0xCC101915),
-                            contentColor = GodcamAmberGold
-                        ) {
-                            Text(
-                                text = "${uiState.aspectRatio.label} GUIDE",
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    fontFamily = JetBrainsMonoFamily,
-                                    fontWeight = FontWeight.Bold
-                                ),
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                            )
-                        }
-                    }
-                    if (uiState.showHistogram || isProPhotoStyle || isProVideoStyle) {
+                // Top-Right Live Histogram (Only when enabled in Settings or in Pro modes)
+                if (uiState.showHistogram || isProPhotoStyle || isProVideoStyle) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(10.dp)
+                    ) {
                         LiveHistogramOverlay(bins = liveHistogramBins)
                     }
-                }
-
-                // Real-time Hardware Telemetry Strip above the Zoom pill (Zero fake data — live Camera2, SensorManager & BatteryManager)
-                Surface(
-                    shape = RoundedCornerShape(50),
-                    color = Color(0x990E1613),
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .padding(start = 12.dp, bottom = 52.dp)
-                ) {
-                    val caps = uiState.capabilities
-                    val freeGb = String.format(Locale.US, "%.1fGB", caps.availableStorageMb / 1024f)
-                    val tiltStr = String.format(Locale.US, "%+.1f°", uiState.deviceTiltDegrees)
-                    Text(
-                        text = "ID:${caps.activeCameraId} ${caps.focalLengthMm}mm f/${caps.apertureF} • $tiltStr • ${caps.batteryTempCelsius}°C • $freeGb",
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            fontFamily = JetBrainsMonoFamily,
-                            fontSize = 9.5.sp,
-                            color = Color(0xFFDCE7E1),
-                            fontWeight = FontWeight.Medium
-                        ),
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                    )
                 }
 
                 // Self-Timer Full-Viewfinder Countdown Overlay
@@ -974,7 +892,11 @@ fun CameraScreen(
             }
 
             // Quick Inline Live Filter Strip (Works in BOTH Photo AND Video/Pro Video modes!)
-            AnimatedVisibility(visible = uiState.showLiveFilterStrip) {
+            AnimatedVisibility(
+                visible = uiState.showLiveFilterStrip,
+                enter = fadeIn() + expandVertically(),
+                exit = fadeOut() + shrinkVertically()
+            ) {
                 LiveFilterSelectorRibbon(
                     uiState = uiState,
                     onSelectPreset = { viewModel.selectPreset(it) },
@@ -983,14 +905,18 @@ fun CameraScreen(
             }
 
             // Quick Inline Exposure (EV) Slider when tapped inside viewfinder
-            AnimatedVisibility(visible = showExposurePopup && !isProPhotoStyle && !isProVideoStyle) {
+            AnimatedVisibility(
+                visible = showExposurePopup && !isProPhotoStyle && !isProVideoStyle,
+                enter = fadeIn() + expandVertically(),
+                exit = fadeOut() + shrinkVertically()
+            ) {
                 Surface(
                     shape = RoundedCornerShape(16.dp),
                     color = MaterialTheme.colorScheme.surface,
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(top = 6.dp)
-                        .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(16.dp))
+                        .border(1.5.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(16.dp))
                 ) {
                     Box(modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)) {
                         LabeledCameraSlider(
@@ -1006,7 +932,7 @@ fun CameraScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(if (isCompact) 4.dp else 8.dp))
 
             // 3. MODE SELECTOR PILL ("Photo | Video" and "Video | Pro Video")
             Box(
@@ -1023,8 +949,8 @@ fun CameraScreen(
                             shape = RoundedCornerShape(50),
                             color = MaterialTheme.colorScheme.surfaceVariant,
                             modifier = Modifier
-                                .height(36.dp)
-                                .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f), RoundedCornerShape(50))
+                                .height(if (isCompact) 32.dp else 36.dp)
+                                .border(1.4.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(50))
                                 .testTag("return_to_photo_mode_pill")
                         ) {
                             Box(
@@ -1035,7 +961,7 @@ fun CameraScreen(
                                     text = "Photo",
                                     style = MaterialTheme.typography.labelLarge.copy(
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        fontWeight = FontWeight.Medium
+                                        fontWeight = FontWeight.Bold
                                     )
                                 )
                             }
@@ -1060,14 +986,18 @@ fun CameraScreen(
             }
 
             // 4. PRO VIDEO / PRO PHOTO SLIDERS DECK
-            AnimatedVisibility(visible = isProVideoStyle || isProPhotoStyle) {
+            AnimatedVisibility(
+                visible = isProVideoStyle || isProPhotoStyle,
+                enter = fadeIn() + expandVertically(),
+                exit = fadeOut() + shrinkVertically()
+            ) {
                 Surface(
                     shape = RoundedCornerShape(18.dp),
-                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.98f),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = 8.dp)
-                        .border(1.2.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.7f), RoundedCornerShape(18.dp))
+                        .padding(top = 6.dp)
+                        .border(1.6.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(18.dp))
                 ) {
                     if (isProVideoStyle) {
                         ProVideoSlidersDeck(uiState = uiState, viewModel = viewModel)
@@ -1077,24 +1007,23 @@ fun CameraScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(if (isCompact) 4.dp else 8.dp))
 
             // 5. PRIMARY SHUTTER ROW (Recent Real Capture Thumbnail • Tactile Shutter • Lens Switch)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 18.dp),
+                    .padding(horizontal = if (isCompact) 12.dp else 18.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Recent Media Circular Thumbnail -> Opens Gallery (No fake placeholder thumbnail!)
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier
-                        .size(48.dp)
+                        .size(if (isCompact) 44.dp else 48.dp)
                         .clip(CircleShape)
                         .background(MaterialTheme.colorScheme.surfaceVariant)
-                        .border(1.8.dp, MaterialTheme.colorScheme.outline, CircleShape)
+                        .border(2.dp, MaterialTheme.colorScheme.outline, CircleShape)
                         .clickable { viewModel.navigateTo(AppDestination.GALLERY) }
                         .testTag("recent_media_thumbnail")
                 ) {
@@ -1115,7 +1044,6 @@ fun CameraScreen(
                     }
                 }
 
-                // Large Tactile Shutter / Record Control
                 GodcamShutterButton(
                     isVideoMode = uiState.captureMode.isVideo,
                     isRecording = uiState.isRecordingVideo,
@@ -1128,19 +1056,18 @@ fun CameraScreen(
                     }
                 )
 
-                // Front / Rear Lens Switch Button
                 CircularIconControl(
                     icon = Icons.Outlined.Cameraswitch,
                     contentDescription = "Switch Front/Rear Camera",
                     onClick = { viewModel.switchCameraLens() },
-                    size = 46.dp,
+                    size = if (isCompact) 44.dp else 46.dp,
                     testTag = "switch_camera_button"
                 )
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(if (isCompact) 4.dp else 8.dp))
 
-            // 6. BOTTOM QUICK TOOL DOCK (Includes Filter in BOTH Photo and Video / Pro Video modes!)
+            // 6. BOTTOM QUICK TOOL DOCK (Includes Filter & Ratio/Size in BOTH Photo and Video / Pro Video modes!)
             if (isProVideoStyle) {
                 Row(
                     modifier = Modifier
@@ -1158,8 +1085,16 @@ fun CameraScreen(
                         testTag = "dock_filter"
                     )
                     QuickToolItem(
+                        icon = Icons.Outlined.AspectRatio,
+                        label = "Ratio/Size",
+                        badge = if (uiState.useCustomVideoSize) "CUST" else uiState.aspectRatio.label,
+                        isActive = uiState.useCustomVideoSize,
+                        onClick = { showRatioDialogSheet = true },
+                        testTag = "dock_ratio"
+                    )
+                    QuickToolItem(
                         icon = Icons.Outlined.HighQuality,
-                        label = "Resolution",
+                        label = "Res",
                         badge = uiState.videoResolution.shortLabel,
                         onClick = {
                             val list = uiState.capabilities.supportedVideoResolutions
@@ -1192,20 +1127,6 @@ fun CameraScreen(
                         testTag = "dock_bitrate"
                     )
                     QuickToolItem(
-                        icon = Icons.Outlined.Videocam,
-                        label = "Format",
-                        badge = uiState.videoCodec.shortName,
-                        onClick = {
-                            val next = if (uiState.videoCodec == VideoCodecOption.H264) {
-                                VideoCodecOption.HEVC
-                            } else {
-                                VideoCodecOption.H264
-                            }
-                            viewModel.setVideoCodec(next)
-                        },
-                        testTag = "dock_format"
-                    )
-                    QuickToolItem(
                         icon = Icons.Outlined.MoreHoriz,
                         label = "More",
                         onClick = { showMoreToolsSheet = true },
@@ -1228,12 +1149,20 @@ fun CameraScreen(
                         onClick = { viewModel.navigateTo(AppDestination.FILTERS) },
                         testTag = "dock_filter"
                     )
+                    QuickToolItem(
+                        icon = Icons.Outlined.AspectRatio,
+                        label = if (uiState.captureMode.isVideo) "Ratio/Size" else "Ratio",
+                        badge = if (uiState.captureMode.isVideo && uiState.useCustomVideoSize) "CUST" else uiState.aspectRatio.label,
+                        isActive = uiState.captureMode.isVideo && uiState.useCustomVideoSize,
+                        onClick = { showRatioDialogSheet = true },
+                        testTag = "dock_ratio"
+                    )
                     if (uiState.captureMode.isVideo) {
                         QuickToolItem(
                             icon = Icons.Outlined.HighQuality,
                             label = "Res",
                             badge = uiState.videoResolution.shortLabel,
-                            isActive = true,
+                            isActive = !uiState.useCustomVideoSize,
                             onClick = {
                                 val list = uiState.capabilities.supportedVideoResolutions
                                 val next = list[(list.indexOf(uiState.videoResolution) + 1) % list.size]
@@ -1243,21 +1172,14 @@ fun CameraScreen(
                         )
                     } else {
                         QuickToolItem(
-                            icon = Icons.Outlined.AspectRatio,
-                            label = "Ratio",
-                            badge = uiState.aspectRatio.label,
-                            onClick = { showRatioDialogSheet = true },
-                            testTag = "dock_ratio"
+                            icon = Icons.Outlined.GridOn,
+                            label = "Grid",
+                            badge = if (uiState.gridMode.name != "OFF") uiState.gridMode.label else null,
+                            isActive = uiState.gridMode.name != "OFF",
+                            onClick = { viewModel.cycleGridMode() },
+                            testTag = "dock_grid"
                         )
                     }
-                    QuickToolItem(
-                        icon = Icons.Outlined.GridOn,
-                        label = "Grid",
-                        badge = if (uiState.gridMode.name != "OFF") uiState.gridMode.label else null,
-                        isActive = uiState.gridMode.name != "OFF",
-                        onClick = { viewModel.cycleGridMode() },
-                        testTag = "dock_grid"
-                    )
                     QuickToolItem(
                         icon = Icons.Outlined.Timer,
                         label = "Timer",
@@ -1278,46 +1200,170 @@ fun CameraScreen(
         }
     }
 
-    // Aspect Ratio & Cinematic Framing Bottom Sheet
+    // Aspect Ratio (20 Ratios) & Custom Video Size Bottom Sheet
     if (showRatioDialogSheet) {
         ModalBottomSheet(
             onDismissRequest = { showRatioDialogSheet = false },
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
             containerColor = MaterialTheme.colorScheme.surface
         ) {
+            var customWInput by remember(uiState.customVideoWidth) { mutableStateOf(uiState.customVideoWidth.toString()) }
+            var customHInput by remember(uiState.customVideoHeight) { mutableStateOf(uiState.customVideoHeight.toString()) }
+
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
                     .padding(horizontal = 20.dp, vertical = 12.dp)
-                    .navigationBarsPadding()
+                    .navigationBarsPadding(),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Text(
-                    text = "Aspect Ratio & Framing Guides",
-                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
+                    text = if (uiState.captureMode.isVideo) "Video Aspect Ratio & Custom Size" else "Aspect Ratio & Framing Guides (20 Ratios)",
+                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.ExtraBold)
                 )
-                Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "Native sensor ratios capture full-frame; cinematic ratios apply a non-destructive viewfinder guide and export crop.",
+                    text = if (uiState.captureMode.isVideo) {
+                        "Recorded videos are center-cropped to your chosen aspect ratio or custom pixel dimensions so they never stretch."
+                    } else {
+                        "Select any of the 20 optical, social, medium-format, or cinema widescreen ratios."
+                    },
                     style = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
                 )
-                Spacer(modifier = Modifier.height(14.dp))
+
+                // Custom Video Size Section
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(1.5.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(16.dp))
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Custom Video Size (Width × Height px)",
+                                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.ExtraBold)
+                                )
+                                Text(
+                                    text = "Active: ${uiState.effectiveVideoDimensions().first} × ${uiState.effectiveVideoDimensions().second} px",
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontFamily = JetBrainsMonoFamily,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                )
+                            }
+                            Switch(
+                                checked = uiState.useCustomVideoSize,
+                                onCheckedChange = { viewModel.setUseCustomVideoSize(it) },
+                                modifier = Modifier.testTag("custom_video_size_switch")
+                            )
+                        }
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            val quickSizes = listOf(
+                                "1080×1920 (9:16)" to (1080 to 1920),
+                                "1920×1080 (16:9)" to (1920 to 1080),
+                                "1080×1080 (1:1)" to (1080 to 1080),
+                                "1080×1350 (4:5)" to (1080 to 1350),
+                                "1440×1080 (4:3)" to (1440 to 1080),
+                                "1080×1440 (3:4)" to (1080 to 1440),
+                                "1920×804 (2.39:1)" to (1920 to 804)
+                            )
+                            quickSizes.forEach { (label, pair) ->
+                                val (qw, qh) = pair
+                                FilterChip(
+                                    selected = uiState.useCustomVideoSize && uiState.customVideoWidth == qw && uiState.customVideoHeight == qh,
+                                    onClick = {
+                                        customWInput = qw.toString()
+                                        customHInput = qh.toString()
+                                        viewModel.setCustomVideoDimensions(qw, qh)
+                                    },
+                                    label = { Text(label) }
+                                )
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedTextField(
+                                value = customWInput,
+                                onValueChange = { txt ->
+                                    customWInput = txt.filter { it.isDigit() }
+                                    customWInput.toIntOrNull()?.let { w ->
+                                        if (w >= 320) viewModel.setCustomVideoDimensions(w, uiState.customVideoHeight)
+                                    }
+                                },
+                                label = { Text("Width (px)") },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("custom_video_width_input")
+                            )
+                            OutlinedTextField(
+                                value = customHInput,
+                                onValueChange = { txt ->
+                                    customHInput = txt.filter { it.isDigit() }
+                                    customHInput.toIntOrNull()?.let { h ->
+                                        if (h >= 320) viewModel.setCustomVideoDimensions(uiState.customVideoWidth, h)
+                                    }
+                                },
+                                label = { Text("Height (px)") },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("custom_video_height_input")
+                            )
+                        }
+                    }
+                }
+
+                Text(
+                    text = "All ${AspectRatioOption.entries.size} Aspect Ratios",
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold)
+                )
 
                 AspectRatioOption.entries.forEach { ratio ->
-                    val selected = ratio == uiState.aspectRatio
+                    val selected = !uiState.useCustomVideoSize && ratio == uiState.aspectRatio
+                    val (rw, rh) = ratio.computeDimensionsForLongEdge(uiState.videoResolution.longEdge)
                     Surface(
                         onClick = {
+                            viewModel.setUseCustomVideoSize(false)
                             viewModel.setAspectRatio(ratio)
                             showRatioDialogSheet = false
                         },
                         shape = RoundedCornerShape(14.dp),
-                        color = if (selected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
-                        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        color = if (selected) MaterialTheme.colorScheme.primaryContainer
+                        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 4.dp)
+                            .border(
+                                width = if (selected) 2.dp else 1.dp,
+                                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                                shape = RoundedCornerShape(14.dp)
+                            )
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 11.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -1325,12 +1371,12 @@ fun CameraScreen(
                                 Text(
                                     text = ratio.label,
                                     style = MaterialTheme.typography.titleMedium.copy(
-                                        fontWeight = FontWeight.SemiBold
+                                        fontWeight = FontWeight.ExtraBold
                                     )
                                 )
                                 Text(
-                                    text = ratio.description,
-                                    style = MaterialTheme.typography.bodyMedium.copy(
+                                    text = "${ratio.description} • Video: ${rw}×${rh} px",
+                                    style = MaterialTheme.typography.labelMedium.copy(
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 )
@@ -1341,8 +1387,8 @@ fun CameraScreen(
                                 else MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
                             ) {
                                 Text(
-                                    text = if (ratio.isCinematicGuide) "Guide / Crop" else "Sensor / Crop",
-                                    style = MaterialTheme.typography.labelSmall,
+                                    text = if (ratio.isCinematicGuide) "Cinema Crop" else "Native Crop",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                                 )
                             }
@@ -1457,7 +1503,7 @@ private fun LiveFilterSelectorRibbon(
                     modifier = Modifier.padding(horizontal = 12.dp)
                 ) {
                     Text(
-                        text = "All 108",
+                        text = "All ${FilterCatalog.allPresets.size}",
                         style = MaterialTheme.typography.labelSmall.copy(
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSecondaryContainer
@@ -1472,6 +1518,7 @@ private fun LiveFilterSelectorRibbon(
 @Composable
 private fun CameraTopBar(
     uiState: CameraUiState,
+    isCompact: Boolean,
     onOpenMoreSheet: () -> Unit,
     onToggleProMode: () -> Unit,
     onCycleFlash: () -> Unit,
@@ -1484,6 +1531,7 @@ private fun CameraTopBar(
         FlashModeOption.ON -> Icons.Outlined.FlashOn
         FlashModeOption.TORCH -> Icons.Outlined.Bolt
     }
+    val iconBtnSize = if (isCompact) 36.dp else 40.dp
 
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -1497,18 +1545,18 @@ private fun CameraTopBar(
                 color = GodcamForestActive,
                 contentColor = Color(0xFFFCFBF7),
                 modifier = Modifier
-                    .height(38.dp)
+                    .height(if (isCompact) 34.dp else 38.dp)
                     .testTag("top_pro_mode_pill")
             ) {
                 Box(
                     contentAlignment = Alignment.Center,
-                    modifier = Modifier.padding(horizontal = 18.dp)
+                    modifier = Modifier.padding(horizontal = 16.dp)
                 ) {
                     Text(
                         text = uiState.captureMode.label,
                         style = MaterialTheme.typography.labelLarge.copy(
                             color = Color(0xFFFCFBF7),
-                            fontWeight = FontWeight.Bold
+                            fontWeight = FontWeight.ExtraBold
                         )
                     )
                 }
@@ -1518,33 +1566,41 @@ private fun CameraTopBar(
                 icon = Icons.Outlined.MoreHoriz,
                 contentDescription = "Pro & Manual Controls",
                 onClick = onOpenMoreSheet,
+                size = iconBtnSize,
                 testTag = "top_more_button"
             )
 
-            // Center Capture Profile Pill: cycles resolution or toggles Pro Mode
+            // Center Capture Profile Pill: shows active mode/resolution/ratio and toggles Pro Mode
             Surface(
                 onClick = onToggleProMode,
                 shape = RoundedCornerShape(50),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.9f),
+                color = MaterialTheme.colorScheme.surfaceVariant,
                 modifier = Modifier
-                    .height(36.dp)
-                    .border(1.2.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.6f), RoundedCornerShape(50))
+                    .height(if (isCompact) 32.dp else 36.dp)
+                    .border(1.5.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(50))
                     .testTag("top_profile_pill")
             ) {
                 Box(
                     contentAlignment = Alignment.Center,
-                    modifier = Modifier.padding(horizontal = 16.dp)
+                    modifier = Modifier.padding(horizontal = 14.dp)
                 ) {
-                    val badgeText = if (uiState.captureMode == CaptureMode.NIGHT) {
-                        "NIGHT • LOW LIGHT"
-                    } else {
-                        "${uiState.videoResolution.shortLabel} | ${uiState.videoFps.fps}FPS"
+                    val badgeText = when {
+                        uiState.captureMode == CaptureMode.NIGHT -> "NIGHT • LOW LIGHT"
+                        uiState.captureMode.isVideo && uiState.useCustomVideoSize -> {
+                            "${uiState.customVideoWidth}×${uiState.customVideoHeight} | ${uiState.videoFps.fps}FPS"
+                        }
+                        uiState.captureMode.isVideo -> {
+                            "${uiState.videoResolution.shortLabel} (${uiState.aspectRatio.label}) | ${uiState.videoFps.fps}FPS"
+                        }
+                        else -> {
+                            "${uiState.photoFormat.label} · ${uiState.aspectRatio.label} · PRO"
+                        }
                     }
                     Text(
                         text = badgeText,
                         style = MaterialTheme.typography.labelMedium.copy(
                             fontFamily = JetBrainsMonoFamily,
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.ExtraBold,
                             color = MaterialTheme.colorScheme.onSurface
                         )
                     )
@@ -1552,23 +1608,27 @@ private fun CameraTopBar(
             }
         }
 
-        // Right Controls: Flash/Torch, (Camera Switch in Pro mode), Settings
+        // Right Controls: Flash/Torch (only if hardware has flash unit), Settings
         Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            CircularIconControl(
-                icon = flashIcon,
-                contentDescription = "Flash Mode: ${uiState.flashMode.label}",
-                isSelected = uiState.flashMode != FlashModeOption.OFF,
-                onClick = onCycleFlash,
-                testTag = "top_flash_button"
-            )
+            if (uiState.capabilities.hasFlashUnit) {
+                CircularIconControl(
+                    icon = flashIcon,
+                    contentDescription = "Flash Mode: ${uiState.flashMode.label}",
+                    isSelected = uiState.flashMode != FlashModeOption.OFF,
+                    onClick = onCycleFlash,
+                    size = iconBtnSize,
+                    testTag = "top_flash_button"
+                )
+            }
             if (uiState.captureMode.isPro) {
                 CircularIconControl(
                     icon = Icons.Outlined.Cameraswitch,
                     contentDescription = "Switch Lens",
                     onClick = onSwitchLens,
+                    size = iconBtnSize,
                     testTag = "top_lens_switch_button"
                 )
             }
@@ -1576,6 +1636,7 @@ private fun CameraTopBar(
                 icon = Icons.Outlined.Settings,
                 contentDescription = "Open Settings",
                 onClick = onOpenSettings,
+                size = iconBtnSize,
                 testTag = "top_settings_button"
             )
         }
@@ -1815,7 +1876,7 @@ private fun ProAndAdvancedControlsSheet(
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 20.dp, vertical = 10.dp)
             .navigationBarsPadding(),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -1824,11 +1885,11 @@ private fun ProAndAdvancedControlsSheet(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "Pro Controls & Hardware Telemetry",
-                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
+                    text = "Pro Capture Controls",
+                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.ExtraBold)
                 )
                 Text(
-                    text = "Lens #${caps.activeCameraId} (${caps.hardwareLevelLabel}) • ${caps.focalLengthMm}mm f/${caps.apertureF} • Free: ${caps.availableStorageMb / 1024} GB",
+                    text = "Lens #${caps.activeCameraId} (${caps.hardwareLevelLabel}) • ${caps.focalLengthMm}mm f/${caps.apertureF}",
                     style = MaterialTheme.typography.labelMedium.copy(
                         fontFamily = JetBrainsMonoFamily,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1842,7 +1903,7 @@ private fun ProAndAdvancedControlsSheet(
                 contentColor = Color(0xFFFCFBF7)
             ) {
                 Text(
-                    text = "108 Filters",
+                    text = "${FilterCatalog.allPresets.size} Filters",
                     style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
                 )
@@ -1850,7 +1911,7 @@ private fun ProAndAdvancedControlsSheet(
         }
 
         // 1. Capture Mode Selector Chips (Photo, Video, Pro Photo, Pro Video, Night)
-        Text("Capture Mode", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold))
+        Text("Capture Mode", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.ExtraBold))
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1871,154 +1932,11 @@ private fun ProAndAdvancedControlsSheet(
             }
         }
 
-        // 2. Digital & Fuji Camera Shutter Sound (Turn On / Turn Off + Acoustic Styles)
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "Fuji & Digital Shutter Sound (${uiState.shutterSoundStyle.label})",
-                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
-                )
-                Text(
-                    text = uiState.shutterSoundStyle.description,
-                    style = MaterialTheme.typography.labelSmall.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
-                )
-            }
-            Surface(
-                onClick = { viewModel.toggleShutterSoundOnOff() },
-                shape = RoundedCornerShape(50),
-                color = if (uiState.shutterSoundStyle == ShutterSoundStyle.OFF) MaterialTheme.colorScheme.surfaceVariant else GodcamForestActive,
-                contentColor = if (uiState.shutterSoundStyle == ShutterSoundStyle.OFF) MaterialTheme.colorScheme.onSurfaceVariant else Color(0xFFFCFBF7),
-                modifier = Modifier.testTag("more_sheet_shutter_sound_toggle")
-            ) {
-                Text(
-                    text = if (uiState.shutterSoundStyle == ShutterSoundStyle.OFF) "Sound OFF" else "Sound ON",
-                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                )
-            }
-        }
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            ShutterSoundStyle.entries.forEach { style ->
-                val selected = uiState.shutterSoundStyle == style
-                FilterChip(
-                    selected = selected,
-                    onClick = { viewModel.setShutterSoundStyle(style, playPreview = true) },
-                    leadingIcon = {
-                        Icon(
-                            imageVector = if (style == ShutterSoundStyle.OFF) Icons.AutoMirrored.Outlined.VolumeOff else Icons.AutoMirrored.Outlined.VolumeUp,
-                            contentDescription = null,
-                            modifier = Modifier.size(15.dp)
-                        )
-                    },
-                    label = { Text(style.label) },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = MaterialTheme.colorScheme.primary,
-                        selectedLabelColor = MaterialTheme.colorScheme.onPrimary
-                    )
-                )
-            }
-        }
-
-        // 3. Hardware-Supported Video Resolutions
+        // 2. White Balance Presets & Kelvin
         Text(
-            text = "Hardware-Supported Video Resolutions (${caps.supportedVideoResolutions.size} verified)",
-            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
+            text = "White Balance (${uiState.whiteBalance.label} • ${uiState.manualKelvin}K)",
+            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.ExtraBold)
         )
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            caps.supportedVideoResolutions.forEach { res ->
-                val selected = uiState.videoResolution == res
-                FilterChip(
-                    selected = selected,
-                    onClick = { viewModel.setVideoResolution(res) },
-                    label = { Text(res.fullLabel) },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = MaterialTheme.colorScheme.primary,
-                        selectedLabelColor = MaterialTheme.colorScheme.onPrimary
-                    )
-                )
-            }
-        }
-
-        // 4. Hardware-Supported Video Audio Recording Formats
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(
-                text = "Hardware-Supported Video Audio Formats (${caps.supportedAudioFormats.size} verified)",
-                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
-            )
-            Text(
-                text = "Active: ${uiState.audioRecordingFormat.label} — ${uiState.audioRecordingFormat.specsLabel}",
-                style = MaterialTheme.typography.labelSmall.copy(
-                    fontFamily = JetBrainsMonoFamily,
-                    color = MaterialTheme.colorScheme.primary
-                )
-            )
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                caps.supportedAudioFormats.forEach { audioFmt ->
-                    val selected = uiState.audioRecordingFormat == audioFmt
-                    FilterChip(
-                        selected = selected,
-                        onClick = { viewModel.setAudioRecordingFormat(audioFmt) },
-                        leadingIcon = {
-                            Icon(
-                                imageVector = if (audioFmt == AudioRecordingFormat.MUTED) Icons.Outlined.MicOff else Icons.Outlined.Mic,
-                                contentDescription = null,
-                                modifier = Modifier.size(15.dp)
-                            )
-                        },
-                        label = { Text(audioFmt.label) },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = MaterialTheme.colorScheme.primary,
-                            selectedLabelColor = MaterialTheme.colorScheme.onPrimary
-                        )
-                    )
-                }
-            }
-        }
-
-        // 5. Hardware-Supported Photo Capture Formats
-        Text(
-            text = "Hardware-Supported Photo Formats (${caps.supportedPhotoFormats.size} verified)",
-            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
-        )
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            caps.supportedPhotoFormats.forEach { fmt ->
-                val selected = uiState.photoFormat == fmt
-                FilterChip(
-                    selected = selected,
-                    onClick = { viewModel.setPhotoFormat(fmt) },
-                    label = { Text("${fmt.label} (100%)") },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = MaterialTheme.colorScheme.primary,
-                        selectedLabelColor = MaterialTheme.colorScheme.onPrimary
-                    )
-                )
-            }
-        }
-
-        // 6. White Balance Presets & Kelvin
-        Text("White Balance (${uiState.whiteBalance.label} • ${uiState.manualKelvin}K)", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold))
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -2048,7 +1966,7 @@ private fun ProAndAdvancedControlsSheet(
             )
         }
 
-        // 7. Manual Focus Slider (only when supported by hardware lens)
+        // 3. Manual Focus Slider (only when supported by hardware lens)
         if (caps.supportsManualFocus) {
             LabeledCameraSlider(
                 label = "Optical Focus Distance",
@@ -2062,8 +1980,8 @@ private fun ProAndAdvancedControlsSheet(
             )
         }
 
-        // 8. Video Stabilization
-        Text("Video Stabilization", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold))
+        // 4. Video Stabilization
+        Text("Video Stabilization", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.ExtraBold))
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -2083,36 +2001,6 @@ private fun ProAndAdvancedControlsSheet(
             }
         }
 
-        // 9. Viewfinder Assist Overlays
-        Text("Viewfinder Assist Overlays (Not burned into capture)", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold))
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            FilterChip(
-                selected = uiState.showHistogram,
-                onClick = { viewModel.toggleHistogram() },
-                label = { Text("Live Histogram") }
-            )
-            FilterChip(
-                selected = uiState.showFocusPeaking,
-                onClick = { viewModel.toggleFocusPeaking() },
-                label = { Text("Focus Peaking") }
-            )
-            FilterChip(
-                selected = uiState.showZebraStripes,
-                onClick = { viewModel.toggleZebraStripes() },
-                label = { Text("Zebra Clipping") }
-            )
-            FilterChip(
-                selected = uiState.aeAfLocked,
-                onClick = { viewModel.toggleAeAfLock() },
-                label = { Text("AE/AF Lock") }
-            )
-        }
-
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(8.dp))
     }
 }

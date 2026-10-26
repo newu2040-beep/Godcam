@@ -27,6 +27,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.outlined.CameraAlt
+import androidx.compose.material.icons.outlined.HighQuality
 import androidx.compose.material.icons.outlined.Memory
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.PrivacyTip
@@ -48,15 +49,18 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.data.UserPreferencesState
 import com.example.model.AppThemeOption
+import com.example.model.AspectRatioOption
+import com.example.model.CompactLayoutMode
 import com.example.model.GridMode
-import com.example.model.PhotoFormat
 import com.example.model.ShutterSoundStyle
 import com.example.ui.AppDestination
 import com.example.ui.CameraUiState
 import com.example.ui.GodcamViewModel
 import com.example.ui.components.GodcamLensEmblem
+import com.example.ui.components.SegmentedPillSelector
 import com.example.ui.theme.JetBrainsMonoFamily
 import java.util.Locale
 
@@ -87,10 +91,10 @@ fun SettingsScreen(
                 .widthIn(max = 640.dp)
                 .align(Alignment.TopCenter)
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 18.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            // Header
+            // Bold Minimalist Header
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -107,20 +111,34 @@ fun SettingsScreen(
                             tint = MaterialTheme.colorScheme.onBackground
                         )
                     }
-                    Text(
-                        text = "Settings & Hardware",
-                        style = MaterialTheme.typography.headlineMedium.copy(
-                            color = MaterialTheme.colorScheme.onBackground,
-                            fontWeight = FontWeight.Bold
+                    Column {
+                        Text(
+                            text = "Settings",
+                            style = MaterialTheme.typography.headlineMedium.copy(
+                                color = MaterialTheme.colorScheme.onBackground,
+                                fontWeight = FontWeight.ExtraBold
+                            )
                         )
-                    )
+                        Text(
+                            text = "DISPLAY • PASTEL THEMES • VERIFIED HARDWARE",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontFamily = JetBrainsMonoFamily,
+                                fontSize = 9.5.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 0.8.sp
+                            )
+                        )
+                    }
                 }
 
                 Surface(
                     onClick = { viewModel.navigateTo(AppDestination.SPLASH_HERO) },
                     shape = RoundedCornerShape(50),
                     color = MaterialTheme.colorScheme.secondaryContainer,
-                    modifier = Modifier.testTag("settings_view_splash_button")
+                    modifier = Modifier
+                        .border(1.2.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(50))
+                        .testTag("settings_view_splash_button")
                 ) {
                     Text(
                         text = "Hero Cover",
@@ -130,104 +148,16 @@ fun SettingsScreen(
                 }
             }
 
-            // 1. Real-Time Hardware Capability & Telemetry Matrix (Camera2, MediaCodecList, BatteryManager, PowerManager, StatFs)
+            // 1. COMPACT DISPLAY MODE & 15 PASTEL / PRO THEMES
             Surface(
                 shape = RoundedCornerShape(20.dp),
                 color = MaterialTheme.colorScheme.surface,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .border(1.2.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(20.dp))
+                    .border(1.8.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(20.dp))
             ) {
                 Column(
-                    modifier = Modifier.padding(18.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.Outlined.Memory,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = "Real-Time Hardware Telemetry",
-                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
-                            )
-                        }
-                        IconButton(
-                            onClick = { viewModel.refreshHardwareTelemetryNow() },
-                            modifier = Modifier.size(32.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Outlined.Refresh,
-                                contentDescription = "Refresh Hardware Telemetry",
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-                    }
-                    Text(
-                        text = "Queried directly from Android Camera2 CameraCharacteristics, StreamConfigurationMap, MediaCodecList, BatteryManager, PowerManager, and StatFs.",
-                        style = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    CapabilityStatRow("Active Camera Sensor ID", "Camera #${caps.activeCameraId} (${caps.hardwareLevelLabel})")
-                    CapabilityStatRow("Optical Focal Length & Aperture", "${caps.focalLengthMm}mm • f/${caps.apertureF}")
-                    CapabilityStatRow("Max Sensor Still Resolution", "${caps.maxPhotoWidth} × ${caps.maxPhotoHeight} px")
-                    CapabilityStatRow("Optical Zoom Ratio Range", "${caps.minZoom}x – ${caps.maxZoom}x")
-                    CapabilityStatRow("Optical / Digital Stabilization", if (caps.supportsOpticalStabilization) "OIS + EIS Supported" else "EIS Digital Supported")
-                    CapabilityStatRow("Supported Video Resolutions", caps.supportedVideoResolutions.joinToString { it.shortLabel })
-                    CapabilityStatRow("Supported Target FPS Ranges", caps.supportedFpsChoices.joinToString { "${it.fps}fps" })
-                    CapabilityStatRow("Hardware Video Codecs", caps.supportedCodecs.joinToString { it.shortName })
-                    if (caps.encoderNames.isNotEmpty()) {
-                        CapabilityStatRow("MediaCodec Encoders", caps.encoderNames.joinToString())
-                    }
-                    CapabilityStatRow("Native Audio Sample Rate", "${caps.nativeAudioSampleRateHz} Hz")
-                    CapabilityStatRow("Supported Audio Formats", caps.supportedAudioFormats.joinToString { it.shortBadge })
-                    if (caps.audioEncoderNames.isNotEmpty()) {
-                        CapabilityStatRow("Hardware Audio Encoders", caps.audioEncoderNames.joinToString())
-                    }
-                    CapabilityStatRow("ISO Sensitivity Range", "ISO ${caps.isoRange.first} – ${caps.isoRange.last}")
-                    CapabilityStatRow("Exposure Compensation Range", "${caps.evRange.start} EV to +${caps.evRange.endInclusive} EV")
-                    CapabilityStatRow("RAW (DNG) Sensor Support", if (caps.supportsRawCapture) "Supported" else "JPEG / PNG / WebP Only")
-                    CapabilityStatRow("8K Native Hardware Support", if (caps.supports8K) "Supported" else "Not Supported")
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.45f))
-                    CapabilityStatRow(
-                        label = "Real-Time Accelerometer Tilt",
-                        value = String.format(Locale.US, "%+.1f°", uiState.deviceTiltDegrees)
-                    )
-                    CapabilityStatRow(
-                        label = "Battery Level & Temperature",
-                        value = "${caps.batteryPercent}% • ${caps.batteryTempCelsius}°C"
-                    )
-                    CapabilityStatRow("PowerManager Thermal Status", caps.thermalStatusLabel)
-                    CapabilityStatRow(
-                        label = "Device Storage (StatFs)",
-                        value = String.format(
-                            Locale.US,
-                            "%.1f GB free / %.1f GB total",
-                            caps.availableStorageMb / 1024f,
-                            caps.totalStorageMb / 1024f
-                        )
-                    )
-                }
-            }
-
-            // 2. Themes & Personalization (8 Accessible Circular Swatches)
-            Surface(
-                shape = RoundedCornerShape(20.dp),
-                color = MaterialTheme.colorScheme.surface,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .border(1.2.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(20.dp))
-            ) {
-                Column(
-                    modifier = Modifier.padding(18.dp),
+                    modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -239,17 +169,44 @@ fun SettingsScreen(
                         Spacer(modifier = Modifier.width(8.dp))
                         Column {
                             Text(
-                                text = "Themes & Personalization",
-                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                                text = "Display Density & Pastel Themes",
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold)
                             )
                             Text(
-                                text = "Active: ${preferences.theme.title} — ${preferences.theme.direction}",
-                                style = MaterialTheme.typography.bodyMedium.copy(
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                text = "${preferences.theme.title} — ${preferences.theme.direction}",
+                                style = MaterialTheme.typography.labelMedium.copy(
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontWeight = FontWeight.SemiBold
                                 )
                             )
                         }
                     }
+
+                    Text(
+                        text = "Compact UI Mode (Small & Large Displays)",
+                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
+                    )
+                    SegmentedPillSelector(
+                        options = CompactLayoutMode.entries,
+                        selectedOption = uiState.compactLayoutMode,
+                        labelProvider = { it.label },
+                        onOptionSelected = { viewModel.setCompactLayoutMode(it) },
+                        modifier = Modifier.fillMaxWidth(),
+                        testTagPrefix = "settings_compact_mode"
+                    )
+                    Text(
+                        text = uiState.compactLayoutMode.description,
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    )
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.45f))
+
+                    Text(
+                        text = "Pastel & Pro Color Themes (${AppThemeOption.entries.size} Themes)",
+                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
+                    )
 
                     Row(
                         modifier = Modifier
@@ -273,7 +230,7 @@ fun SettingsScreen(
                                         .clip(CircleShape)
                                         .background(Color(themeOpt.bgHex))
                                         .border(
-                                            width = if (selected) 3.dp else 1.5.dp,
+                                            width = if (selected) 3.dp else 1.8.dp,
                                             color = if (selected) MaterialTheme.colorScheme.primary else Color(themeOpt.accentHex),
                                             shape = CircleShape
                                         )
@@ -299,7 +256,7 @@ fun SettingsScreen(
                                 Text(
                                     text = themeOpt.title,
                                     style = MaterialTheme.typography.labelSmall.copy(
-                                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
+                                        fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.SemiBold
                                     )
                                 )
                             }
@@ -308,16 +265,16 @@ fun SettingsScreen(
                 }
             }
 
-            // 3. Capture Defaults & Haptics
+            // 2. CAMERA & VIEWFINDER CONTROLS (Cleanly organized in Settings to keep Camera UI minimal)
             Surface(
                 shape = RoundedCornerShape(20.dp),
                 color = MaterialTheme.colorScheme.surface,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .border(1.2.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(20.dp))
+                    .border(1.8.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(20.dp))
             ) {
                 Column(
-                    modifier = Modifier.padding(18.dp),
+                    modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -328,12 +285,48 @@ fun SettingsScreen(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "Default Capture Preferences",
-                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                            text = "Camera & Viewfinder Controls",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold)
                         )
                     }
 
-                    Text("Default Composition Grid", style = MaterialTheme.typography.labelLarge)
+                    Text("Viewfinder Assist Overlays", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        FilterChip(
+                            selected = uiState.showHistogram,
+                            onClick = { viewModel.toggleHistogram() },
+                            label = { Text("Live Histogram") },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = MaterialTheme.colorScheme.primary,
+                                selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                            )
+                        )
+                        FilterChip(
+                            selected = uiState.showFocusPeaking,
+                            onClick = { viewModel.toggleFocusPeaking() },
+                            label = { Text("Focus Peaking") },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = MaterialTheme.colorScheme.primary,
+                                selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                            )
+                        )
+                        FilterChip(
+                            selected = uiState.showZebraStripes,
+                            onClick = { viewModel.toggleZebraStripes() },
+                            label = { Text("Zebra Clipping") },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = MaterialTheme.colorScheme.primary,
+                                selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                            )
+                        )
+                    }
+
+                    Text("Default Composition Grid", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold))
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -353,21 +346,30 @@ fun SettingsScreen(
                         }
                     }
 
-                    Text("Default Photo Format (Hardware Supported)", style = MaterialTheme.typography.labelLarge)
+                    Text(
+                        text = "Default Aspect Ratio (${AspectRatioOption.entries.size} Ratios — Photo & Video)",
+                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
+                    )
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        caps.supportedPhotoFormats.forEach { fmt ->
+                        AspectRatioOption.entries.forEach { ratio ->
                             FilterChip(
-                                selected = uiState.photoFormat == fmt,
-                                onClick = { viewModel.setPhotoFormat(fmt) },
-                                label = { Text(fmt.label) }
+                                selected = uiState.aspectRatio == ratio,
+                                onClick = { viewModel.setAspectRatio(ratio) },
+                                label = { Text(ratio.label) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = MaterialTheme.colorScheme.primary,
+                                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                                )
                             )
                         }
                     }
 
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.45f))
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -376,12 +378,12 @@ fun SettingsScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Fuji & Digital Camera Shutter Sound",
-                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
+                                text = "Fuji & Digital Shutter Sound",
+                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.ExtraBold)
                             )
                             Text(
                                 text = "${uiState.shutterSoundStyle.label} — ${uiState.shutterSoundStyle.description}",
-                                style = MaterialTheme.typography.bodyMedium.copy(
+                                style = MaterialTheme.typography.labelMedium.copy(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             )
@@ -413,13 +415,100 @@ fun SettingsScreen(
                         }
                     }
 
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.45f))
 
-                    Text("Default Video Audio Recording Format (Hardware Verified)", style = MaterialTheme.typography.labelLarge)
-                    Text(
-                        text = "${uiState.audioRecordingFormat.label} (${uiState.audioRecordingFormat.specsLabel})",
-                        style = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Tactile Shutter & Dial Haptics",
+                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.ExtraBold)
+                            )
+                            Text(
+                                text = "Subtle vibration feedback on shutter, mode switch, and lens stops",
+                                style = MaterialTheme.typography.labelMedium.copy(
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            )
+                        }
+                        Switch(
+                            checked = preferences.hapticsEnabled,
+                            onCheckedChange = { viewModel.setHapticsEnabled(it) },
+                            modifier = Modifier.testTag("settings_haptics_switch")
+                        )
+                    }
+                }
+            }
+
+            // 3. HARDWARE-SUPPORTED CAPTURE & AUDIO FORMATS (Only supported options shown)
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = MaterialTheme.colorScheme.surface,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.8.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(20.dp))
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Outlined.HighQuality,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Hardware-Supported Formats",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold)
+                        )
+                    }
+
+                    Text("Photo Capture Formats", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        caps.supportedPhotoFormats.forEach { fmt ->
+                            FilterChip(
+                                selected = uiState.photoFormat == fmt,
+                                onClick = { viewModel.setPhotoFormat(fmt) },
+                                label = { Text(fmt.label) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = MaterialTheme.colorScheme.primary,
+                                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                                )
+                            )
+                        }
+                    }
+
+                    Text("Video Resolutions", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        caps.supportedVideoResolutions.forEach { res ->
+                            FilterChip(
+                                selected = !uiState.useCustomVideoSize && uiState.videoResolution == res,
+                                onClick = { viewModel.setVideoResolution(res) },
+                                label = { Text(res.fullLabel) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = MaterialTheme.colorScheme.primary,
+                                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                                )
+                            )
+                        }
+                    }
+
+                    Text("Video Audio Recording Format", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold))
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -439,42 +528,101 @@ fun SettingsScreen(
                             )
                         }
                     }
-
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("Tactile Shutter & Dial Haptics", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold))
-                            Text(
-                                text = "Subtle vibration feedback on shutter, mode switch, and lens stops",
-                                style = MaterialTheme.typography.bodyMedium.copy(
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            )
-                        }
-                        Switch(
-                            checked = preferences.hapticsEnabled,
-                            onCheckedChange = { viewModel.setHapticsEnabled(it) },
-                            modifier = Modifier.testTag("settings_haptics_switch")
-                        )
-                    }
                 }
             }
 
-            // 4. Privacy & Contextual Permissions
+            // 4. VERIFIED HARDWARE SPECIFICATIONS (Strictly hides unsupported specs)
             Surface(
                 shape = RoundedCornerShape(20.dp),
                 color = MaterialTheme.colorScheme.surface,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .border(1.2.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(20.dp))
+                    .border(1.8.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(20.dp))
             ) {
                 Column(
-                    modifier = Modifier.padding(18.dp),
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Outlined.Memory,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Verified Hardware Specifications",
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold)
+                            )
+                        }
+                        IconButton(
+                            onClick = { viewModel.refreshHardwareTelemetryNow() },
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.Refresh,
+                                contentDescription = "Refresh Hardware",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+
+                    CapabilityStatRow("Active Sensor", "Lens #${caps.activeCameraId} (${caps.hardwareLevelLabel})")
+                    CapabilityStatRow("Optics", "${caps.focalLengthMm}mm • f/${caps.apertureF}")
+                    CapabilityStatRow("Max Sensor Still Output", "${caps.maxPhotoWidth} × ${caps.maxPhotoHeight} px")
+                    CapabilityStatRow("Zoom Range", "${caps.minZoom}x – ${caps.maxZoom}x")
+                    CapabilityStatRow(
+                        label = "Stabilization",
+                        value = if (caps.supportsOpticalStabilization) "Optical OIS + Digital EIS" else "Digital EIS"
+                    )
+                    CapabilityStatRow("Video Resolutions", caps.supportedVideoResolutions.joinToString { it.shortLabel })
+                    CapabilityStatRow("Video Frame Rates", caps.supportedFpsChoices.joinToString { "${it.fps}fps" })
+                    CapabilityStatRow("Hardware Video Codecs", caps.supportedCodecs.joinToString { it.shortName })
+                    CapabilityStatRow("Audio Sample Rate", "${caps.nativeAudioSampleRateHz} Hz")
+                    CapabilityStatRow("ISO Range", "ISO ${caps.isoRange.first} – ${caps.isoRange.last}")
+                    CapabilityStatRow("Exposure Compensation", "${caps.evRange.start} EV to +${caps.evRange.endInclusive} EV")
+
+                    // Only show optional hardware capabilities when actually supported by the device
+                    if (caps.supportsRawCapture) {
+                        CapabilityStatRow("RAW (DNG) Capture", "Hardware Supported")
+                    }
+                    if (caps.supports8K) {
+                        CapabilityStatRow("8K UHD Video", "Hardware Supported")
+                    }
+                    if (caps.hasFlashUnit) {
+                        CapabilityStatRow("Optical Flash / Torch", "Hardware Supported")
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.45f))
+
+                    CapabilityStatRow(
+                        label = "Available Storage",
+                        value = String.format(
+                            Locale.US,
+                            "%.1f GB free / %.1f GB",
+                            caps.availableStorageMb / 1024f,
+                            caps.totalStorageMb / 1024f
+                        )
+                    )
+                }
+            }
+
+            // 5. PRIVACY & PERMISSIONS
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = MaterialTheme.colorScheme.surface,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.8.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(20.dp))
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -485,14 +633,10 @@ fun SettingsScreen(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "Privacy & Contextual Permissions",
-                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                            text = "Privacy & Permissions",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold)
                         )
                     }
-                    Text(
-                        text = "• Offline-First: No account, cloud upload, or internet is required. All 108 film looks, camera controls, and Export Studio run 100% locally on your device.\n• Zero-Permission Imports: External photos use the Android Photo Picker without broad storage access.",
-                        style = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    )
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -500,10 +644,13 @@ fun SettingsScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Include Geotag / Location Metadata", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold))
                             Text(
-                                text = "Opt-in only; removable anytime in Export Studio",
-                                style = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                text = "Include Geotag Metadata",
+                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.ExtraBold)
+                            )
+                            Text(
+                                text = "Removable anytime in Export Studio",
+                                style = MaterialTheme.typography.labelMedium.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
                             )
                         }
                         Switch(
@@ -511,23 +658,6 @@ fun SettingsScreen(
                             onCheckedChange = { viewModel.setPreserveLocation(it) }
                         )
                     }
-
-                    CapabilityStatRow(
-                        label = "Camera Permission",
-                        value = if (uiState.cameraPermissionGranted) "Granted" else "Tap Below to Grant"
-                    )
-                    CapabilityStatRow(
-                        label = "Microphone Permission",
-                        value = if (uiState.micPermissionGranted) "Granted" else "Tap Below to Grant"
-                    )
-                    CapabilityStatRow(
-                        label = "Notifications Permission",
-                        value = if (uiState.notificationsPermissionGranted) "Granted" else "Tap Below to Grant"
-                    )
-                    CapabilityStatRow(
-                        label = "Gallery Auto-Save (DCIM/GODCAM)",
-                        value = "Active (Photos & MP4 Videos)"
-                    )
 
                     Surface(
                         onClick = {
@@ -545,9 +675,9 @@ fun SettingsScreen(
                         Box(contentAlignment = Alignment.Center) {
                             Text(
                                 text = if (uiState.allCorePermissionsGranted) {
-                                    "Review Permissions & Gallery Auto-Save"
+                                    "Permissions Granted • Auto-Save Active"
                                 } else {
-                                    "Allow All Permissions (Camera, Mic, Notifications & Gallery)"
+                                    "Grant Camera, Mic & Gallery Permissions"
                                 },
                                 style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
                             )
@@ -561,17 +691,13 @@ fun SettingsScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 12.dp)
+                    .padding(vertical = 8.dp)
             ) {
-                GodcamLensEmblem(size = 48.dp)
-                Spacer(modifier = Modifier.height(6.dp))
+                GodcamLensEmblem(size = 44.dp)
+                Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = "GODCAM • Version 1.0",
-                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
-                )
-                Text(
-                    text = "Capture More Than Moments.",
-                    style = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.ExtraBold)
                 )
             }
         }
@@ -589,7 +715,10 @@ private fun CapabilityStatRow(label: String, value: String) {
     ) {
         Text(
             text = label,
-            style = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurfaceVariant),
+            style = MaterialTheme.typography.bodyMedium.copy(
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontWeight = FontWeight.Medium
+            ),
             modifier = Modifier.weight(1f)
         )
         Spacer(modifier = Modifier.width(8.dp))

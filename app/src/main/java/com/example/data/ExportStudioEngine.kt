@@ -3,7 +3,6 @@ package com.example.data
 import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -33,7 +32,7 @@ object ExportStudioEngine {
      */
     fun estimateOutputBytes(item: MediaItemModel, config: ExportConfig): Long {
         return if (item.isVideo) {
-            val dur = item.durationSec.coerceAtLeast(10).toLong()
+            val dur = item.durationSec.coerceAtLeast(5).toLong()
             val mbps = config.bitrateMbps.coerceIn(4, 200).toLong()
             (dur * mbps * 125_000L)
         } else {
@@ -49,9 +48,9 @@ object ExportStudioEngine {
     }
 
     /**
-     * Executes a real export job off the main thread, applying the non-destructive look recipe,
-     * aspect ratio crop, custom dimensions (enforcing even encoder bounds), and EXIF metadata policy,
-     * saving a brand-new file into both app storage and Android MediaStore while preserving the original.
+     * Executes a real export job off the main thread, keeping Photo and Video export pipelines
+     * completely distinct while applying the non-destructive look recipe, aspect ratio crop,
+     * and custom dimensions without stretching.
      */
     suspend fun executeExport(
         context: Context,
@@ -62,39 +61,81 @@ object ExportStudioEngine {
     ): ExportJobState = withContext(Dispatchers.IO) {
         try {
             currentCoroutineContext().ensureActive()
-            onProgress(ExportJobState.Running(0.12f, "Validating source media & hardware bounds…"))
-            delay(140)
-
-            // Load source bitmap (or generate from curated scene if external URI unavailable)
-            val rawSource: Bitmap = loadSourceBitmap(context, sourceItem)
-            currentCoroutineContext().ensureActive()
+            onProgress(ExportJobState.Running(0.14f, "Validating source media & hardware bounds…"))
+            delay(100)
 
             val preset = FilterCatalog.getById(recipe.presetId)
-            onProgress(ExportJobState.Running(0.36f, "Applying ${preset.name} look (${(recipe.intensity * 100).toInt()}%)…"))
-            delay(180)
-
-            // Ensure even dimensions for encoder/codec compatibility
-            val targetW = if (sourceItem.isVideo) {
-                config.videoResolution.width
-            } else {
-                config.customWidth.coerceIn(256, 7680).let { if (it % 2 != 0) it + 1 else it }
-            }
-            val targetH = if (sourceItem.isVideo) {
-                config.videoResolution.height
-            } else {
-                config.customHeight.coerceIn(256, 7680).let { if (it % 2 != 0) it + 1 else it }
-            }
-
+            val targetW = config.customWidth.coerceIn(256, 7680).let { if (it % 2 != 0) it + 1 else it }
+            val targetH = config.customHeight.coerceIn(256, 7680).let { if (it % 2 != 0) it + 1 else it }
             val wasUpscaled = targetW > sourceItem.width || targetH > sourceItem.height
 
-            // Scale bitmap to bounded working resolution to respect device memory while preserving aspect
             val boundedScale = if (maxOf(targetW, targetH) > 2560) 2560f / maxOf(targetW, targetH) else 1f
             val renderW = ((targetW * boundedScale).toInt().coerceAtLeast(320)).let { if (it % 2 != 0) it + 1 else it }
             val renderH = ((targetH * boundedScale).toInt().coerceAtLeast(240)).let { if (it % 2 != 0) it + 1 else it }
 
-            currentCoroutineContext().ensureActive()
-            onProgress(ExportJobState.Running(0.64f, "Rendering ${targetW}×${targetH} (${config.aspectRatio.label})…"))
+            if (sourceItem.isVideo) {
+                // VIDEO EXPORT PIPELINE
+                onProgress(
+                    ExportJobState.Running(
+                        0.42f,
+                        "Rendering ${targetW}×${targetH} (${config.aspectRatio.label}) @ ${config.videoFps.fps}fps…"
+                    )
+                )
+                val sourceFrames = MediaGallerySaver.loadVideoFilteredFrames(sourceItem.filePath)
+                    .ifEmpty { listOf(loadSourceBitmap(context, sourceItem)) }
 
+                val croppedFrames = sourceFrames.mapNotNull { frame ->
+                    runCatching {
+                        ImageFilterEngine.renderFilteredBitmap(
+                            source = frame,
+                            preset = preset,
+                            recipe = recipe.copy(aspectRatio = config.aspectRatio),
+                            targetWidth = renderW,
+                            targetHeight = renderH,
+                            applyCrop = true
+                        )
+                    }.getOrNull()
+                }
+                val poster = croppedFrames.firstOrNull() ?: loadSourceBitmap(context, sourceItem)
+
+                currentCoroutineContext().ensureActive()
+                onProgress(ExportJobState.Running(0.80f, "Encoding ${config.videoCodec.shortName} stream (${config.bitrateMbps} Mbps)…"))
+
+                val savedVideo = MediaGallerySaver.saveVideoToGallery(
+                    context = context,
+                    posterBitmap = poster,
+                    capturedFrames = croppedFrames,
+                    existingMp4File = null,
+                    durationSec = sourceItem.durationSec.coerceAtLeast(3),
+                    width = targetW,
+                    height = targetH,
+                    fps = config.videoFps.fps,
+                    bitrateMbps = config.bitrateMbps
+                )
+                croppedFrames.forEach { runCatching { it.recycle() } }
+
+                onProgress(ExportJobState.Running(1.0f, "Video export complete"))
+                val formatBadge = "${config.videoResolution.shortLabel} (${targetW}×${targetH}) • ${config.videoFps.fps}fps • ${config.videoCodec.shortName}"
+
+                return@withContext ExportJobState.Completed(
+                    outputFilePath = savedVideo.posterFile.absolutePath,
+                    outputUriString = savedVideo.localFile.absolutePath,
+                    width = targetW,
+                    height = targetH,
+                    sizeBytes = savedVideo.sizeBytes.coerceAtLeast(120_000L),
+                    formatLabel = formatBadge,
+                    wasUpscaled = wasUpscaled
+                )
+            }
+
+            // PHOTO EXPORT PIPELINE
+            val rawSource: Bitmap = loadSourceBitmap(context, sourceItem)
+            currentCoroutineContext().ensureActive()
+
+            onProgress(ExportJobState.Running(0.45f, "Applying ${preset.name} look (${(recipe.intensity * 100).toInt()}%)…"))
+            delay(100)
+
+            onProgress(ExportJobState.Running(0.72f, "Cropping & scaling photo to ${targetW}×${targetH} (${config.aspectRatio.label})…"))
             val processedBitmap = ImageFilterEngine.renderFilteredBitmap(
                 source = rawSource,
                 preset = preset,
@@ -108,11 +149,10 @@ object ExportStudioEngine {
             }
 
             currentCoroutineContext().ensureActive()
-            onProgress(ExportJobState.Running(0.84f, "Encoding output & writing metadata…"))
-            delay(160)
+            onProgress(ExportJobState.Running(0.88f, "Encoding ${config.photoFormat.label} (${config.jpegQuality}%)…"))
 
             val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-            val ext = if (sourceItem.isVideo) "jpg" else config.photoFormat.extension
+            val ext = config.photoFormat.extension
             val exportDir = File(context.filesDir, "godcam_exports").apply { mkdirs() }
             val outFile = File(exportDir, "GODCAM_EXPORT_${stamp}.$ext")
 
@@ -134,18 +174,16 @@ object ExportStudioEngine {
             }
             processedBitmap.recycle()
 
-            // Handle EXIF metadata privacy setting on JPEG files
             if (ext == "jpg") {
                 runCatching {
                     val exif = ExifInterface(outFile.absolutePath)
                     if (config.preserveMetadata) {
                         exif.setAttribute(ExifInterface.TAG_MAKE, "GODCAM Studio")
-                        exif.setAttribute(ExifInterface.TAG_MODEL, "GODCAM Optical Pipeline 1.0")
+                        exif.setAttribute(ExifInterface.TAG_MODEL, "GODCAM Optical Pipeline")
                         exif.setAttribute(ExifInterface.TAG_SOFTWARE, "GODCAM • ${preset.name}")
                         exif.setAttribute(ExifInterface.TAG_IMAGE_WIDTH, targetW.toString())
                         exif.setAttribute(ExifInterface.TAG_IMAGE_LENGTH, targetH.toString())
                     } else {
-                        // Strip identifying / location tags
                         exif.setAttribute(ExifInterface.TAG_GPS_LATITUDE, null)
                         exif.setAttribute(ExifInterface.TAG_GPS_LONGITUDE, null)
                         exif.setAttribute(ExifInterface.TAG_MAKE, null)
@@ -155,17 +193,10 @@ object ExportStudioEngine {
                 }
             }
 
-            // Also publish to Android MediaStore Pictures/GODCAM so it appears in system gallery
             val mediaStoreUri = saveToMediaStore(context, outFile, config.photoFormat.mimeType)
 
             currentCoroutineContext().ensureActive()
-            onProgress(ExportJobState.Running(1.0f, "Export complete"))
-
-            val formatBadge = if (sourceItem.isVideo) {
-                "${config.videoResolution.shortLabel} • ${config.videoFps.fps}fps • ${config.videoCodec.shortName}"
-            } else {
-                config.photoFormat.label
-            }
+            onProgress(ExportJobState.Running(1.0f, "Photo export complete"))
 
             ExportJobState.Completed(
                 outputFilePath = outFile.absolutePath,
@@ -173,7 +204,7 @@ object ExportStudioEngine {
                 width = targetW,
                 height = targetH,
                 sizeBytes = outFile.length().coerceAtLeast(64_000L),
-                formatLabel = formatBadge,
+                formatLabel = "${config.photoFormat.label} (${config.jpegQuality}%)",
                 wasUpscaled = wasUpscaled
             )
         } catch (ce: CancellationException) {

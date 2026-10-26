@@ -31,6 +31,7 @@ import com.example.model.AspectRatioOption
 import com.example.model.AudioRecordingFormat
 import com.example.model.CaptureMode
 import com.example.model.ColorProfileOption
+import com.example.model.CompactLayoutMode
 import com.example.model.EditRecipe
 import com.example.model.ExportConfig
 import com.example.model.ExportJobState
@@ -114,13 +115,17 @@ data class CameraUiState(
     val manualFocusDistance: Float = 0.0f,
     val meteringMode: MeteringModeOption = MeteringModeOption.MATRIX,
     val aeAfLocked: Boolean = false,
-    val showHistogram: Boolean = true,
+    val showHistogram: Boolean = false,
     val showFocusPeaking: Boolean = false,
     val showZebraStripes: Boolean = false,
     val nightModeActive: Boolean = false,
-    val showLiveFilterStrip: Boolean = true,
+    val showLiveFilterStrip: Boolean = false,
+    val compactLayoutMode: CompactLayoutMode = CompactLayoutMode.AUTO,
     // Video & Pro Video settings
     val videoResolution: VideoResolution = VideoResolution.FHD_1080P,
+    val useCustomVideoSize: Boolean = false,
+    val customVideoWidth: Int = 1920,
+    val customVideoHeight: Int = 1080,
     val videoFps: VideoFps = VideoFps.FPS_30,
     val videoBitrateMbps: Int = 40,
     val videoCodec: VideoCodecOption = VideoCodecOption.H264,
@@ -153,6 +158,16 @@ data class CameraUiState(
 ) {
     val allCorePermissionsGranted: Boolean
         get() = cameraPermissionGranted && micPermissionGranted && notificationsPermissionGranted
+
+    fun effectiveVideoDimensions(): Pair<Int, Int> {
+        return if (useCustomVideoSize) {
+            val w = customVideoWidth.coerceIn(320, 3840).let { if (it % 2 != 0) it + 1 else it }
+            val h = customVideoHeight.coerceIn(320, 3840).let { if (it % 2 != 0) it + 1 else it }
+            w to h
+        } else {
+            aspectRatio.computeDimensionsForLongEdge(videoResolution.longEdge)
+        }
+    }
 }
 
 class GodcamViewModel(application: Application) : AndroidViewModel(application), SensorEventListener {
@@ -219,7 +234,8 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
                         photoFormat = prefs.defaultPhotoFormat,
                         shutterSoundStyle = prefs.shutterSoundStyle,
                         audioRecordingFormat = validAudio,
-                        audioMuted = validAudio == AudioRecordingFormat.MUTED
+                        audioMuted = validAudio == AudioRecordingFormat.MUTED,
+                        compactLayoutMode = prefs.compactLayoutMode
                     )
                 }
             }
@@ -576,16 +592,52 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
             val resolvedFps = if (state.videoFps in validFps) state.videoFps else validFps.last()
             val maxBitrate = caps.maxBitrateMbpsFor(res, state.videoCodec)
             val resolvedBitrate = state.videoBitrateMbps.coerceAtMost(maxBitrate)
+            val (outW, outH) = state.aspectRatio.computeDimensionsForLongEdge(res.longEdge)
             val note = if (resolvedFps != state.videoFps) {
-                "${res.fullLabel} • Frame rate matched to ${resolvedFps.label} for hardware encoder"
+                "${res.shortLabel} (${outW}×${outH}) • Frame rate matched to ${resolvedFps.label}"
             } else {
-                "Video Resolution: ${res.fullLabel}"
+                "Video Size: ${res.shortLabel} (${outW}×${outH} • ${state.aspectRatio.label})"
             }
             state.copy(
                 videoResolution = res,
+                useCustomVideoSize = false,
+                customVideoWidth = outW,
+                customVideoHeight = outH,
                 videoFps = resolvedFps,
                 videoBitrateMbps = resolvedBitrate,
                 statusBannerMessage = note
+            )
+        }
+    }
+
+    fun setUseCustomVideoSize(enabled: Boolean) {
+        triggerHaptic()
+        _uiState.update { state ->
+            val (defaultW, defaultH) = state.aspectRatio.computeDimensionsForLongEdge(state.videoResolution.longEdge)
+            val w = if (enabled) state.customVideoWidth else defaultW
+            val h = if (enabled) state.customVideoHeight else defaultH
+            state.copy(
+                useCustomVideoSize = enabled,
+                customVideoWidth = w,
+                customVideoHeight = h,
+                statusBannerMessage = if (enabled) {
+                    "Custom Video Size: ${w}×${h} px"
+                } else {
+                    "Standard Video Size: ${defaultW}×${defaultH} (${state.aspectRatio.label})"
+                }
+            )
+        }
+    }
+
+    fun setCustomVideoDimensions(width: Int, height: Int) {
+        val safeW = width.coerceIn(320, 3840).let { if (it % 2 != 0) it + 1 else it }
+        val safeH = height.coerceIn(320, 3840).let { if (it % 2 != 0) it + 1 else it }
+        _uiState.update { state ->
+            state.copy(
+                useCustomVideoSize = true,
+                customVideoWidth = safeW,
+                customVideoHeight = safeH,
+                statusBannerMessage = "Custom Video Size: ${safeW}×${safeH} px"
             )
         }
     }
@@ -1008,11 +1060,12 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
         val state = _uiState.value
         ShutterSoundEngine.playVideoRecordTone(state.shutterSoundStyle, isStarting = true)
         val preset = FilterCatalog.getById(state.activeRecipe.presetId)
+        val (vidW, vidH) = state.effectiveVideoDimensions()
         _uiState.update {
             it.copy(
                 isRecordingVideo = true,
                 recordingElapsedSec = 1,
-                statusBannerMessage = "REC ${it.videoResolution.fullLabel} · ${it.videoFps.fps}fps · ${it.audioRecordingFormat.shortBadge} · ${preset.name}"
+                statusBannerMessage = "REC ${vidW}×${vidH} (${it.aspectRatio.label}) · ${it.videoFps.fps}fps · ${preset.name}"
             )
         }
         recordingJob?.cancel()
@@ -1043,33 +1096,38 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
 
         viewModelScope.launch {
             val preset = FilterCatalog.getById(state.activeRecipe.presetId)
+            val (videoW, videoH) = state.effectiveVideoDimensions()
             val rawFrame = livePreviewBitmap
                 ?: capturedFrames.lastOrNull()
                 ?: _latestCameraFrame.value
-                ?: ImageFilterEngine.createNeutralCalibrationBitmap(state.videoResolution.width, state.videoResolution.height)
+                ?: ImageFilterEngine.createNeutralCalibrationBitmap(videoW, videoH)
 
-            // Apply the active film filter + EV + aspect ratio to the video poster and live frames at the selected resolution
+            val recipeWithRatio = state.activeRecipe.copy(aspectRatio = state.aspectRatio)
+
+            // Apply the active film filter + EV + center-cropped aspect ratio to the video poster and live frames (never stretches)
             val filteredPoster = ImageFilterEngine.renderFilteredBitmap(
                 source = rawFrame,
                 preset = preset,
-                recipe = state.activeRecipe,
-                targetWidth = state.videoResolution.width,
-                targetHeight = state.videoResolution.height,
-                applyCrop = false,
+                recipe = recipeWithRatio,
+                targetWidth = videoW,
+                targetHeight = videoH,
+                applyCrop = !state.useCustomVideoSize,
                 extraEv = state.exposureEv
             )
 
-            val frameTargetW = state.videoResolution.width.coerceIn(1280, 2560)
-            val frameTargetH = state.videoResolution.height.coerceIn(720, 1440)
+            val scaleDown = if (maxOf(videoW, videoH) > 1920) 1920f / maxOf(videoW, videoH).toFloat() else 1f
+            val frameTargetW = ((videoW * scaleDown).roundToInt().coerceAtLeast(320)).let { if (it % 2 != 0) it + 1 else it }
+            val frameTargetH = ((videoH * scaleDown).roundToInt().coerceAtLeast(320)).let { if (it % 2 != 0) it + 1 else it }
+
             val filteredMotionFrames = (if (capturedFrames.isNotEmpty()) capturedFrames else listOf(rawFrame)).mapNotNull { frame ->
                 runCatching {
                     ImageFilterEngine.renderFilteredBitmap(
                         source = frame,
                         preset = preset,
-                        recipe = state.activeRecipe,
+                        recipe = recipeWithRatio,
                         targetWidth = frameTargetW,
                         targetHeight = frameTargetH,
-                        applyCrop = false,
+                        applyCrop = !state.useCustomVideoSize,
                         extraEv = state.exposureEv
                     )
                 }.getOrNull()
@@ -1083,8 +1141,8 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
                 capturedFrames = filteredMotionFrames,
                 existingMp4File = existingMp4File,
                 durationSec = duration,
-                width = state.videoResolution.width,
-                height = state.videoResolution.height,
+                width = videoW,
+                height = videoH,
                 fps = state.videoFps.fps,
                 bitrateMbps = state.videoBitrateMbps
             )
@@ -1093,6 +1151,7 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
 
             val audioTag = state.audioRecordingFormat.label
             val title = "GODCAM_VID_${stamp.takeLast(6)}"
+            val badgeLabel = if (state.useCustomVideoSize) "CUSTOM" else state.videoResolution.shortLabel
 
             repository.insertCapturedOrExportedMedia(
                 title = title,
@@ -1102,11 +1161,11 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
                 width = savedVideo.actualWidth,
                 height = savedVideo.actualHeight,
                 durationSec = duration,
-                formatLabel = state.videoResolution.shortLabel,
+                formatLabel = badgeLabel,
                 sizeBytes = savedVideo.sizeBytes,
                 appliedPresetId = preset.id,
                 appliedIntensity = state.activeRecipe.intensity,
-                cameraInfo = "${savedVideo.actualWidth}×${savedVideo.actualHeight} • ${state.videoFps.fps}fps • ${state.videoBitrateMbps}Mbps • $audioTag • ${preset.name}"
+                cameraInfo = "${savedVideo.actualWidth}×${savedVideo.actualHeight} • ${state.aspectRatio.label} • ${state.videoFps.fps}fps • ${state.videoBitrateMbps}Mbps • $audioTag • ${preset.name}"
             )
 
             MediaGallerySaver.sendAutoSaveNotification(
@@ -1119,7 +1178,7 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
                 it.copy(
                     isCapturing = false,
                     selectedGalleryTab = GalleryTab.VIDEOS,
-                    statusBannerMessage = "Saved ${savedVideo.actualWidth}×${savedVideo.actualHeight} ${state.videoFps.fps}fps Video (${preset.name} • ${state.audioRecordingFormat.shortBadge})"
+                    statusBannerMessage = "Saved ${savedVideo.actualWidth}×${savedVideo.actualHeight} ${state.videoFps.fps}fps Video (${preset.name})"
                 )
             }
         }
@@ -1254,17 +1313,24 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
     // Export Studio Actions (PRD Section 11)
     fun openExportStudio(item: MediaItemModel) {
         triggerHaptic()
+        val itemRatio = if (item.height > 0) item.width.toFloat() / item.height.toFloat() else 1.333f
+        val matchedAspect = AspectRatioOption.entries.minByOrNull {
+            kotlin.math.abs(it.aspectValue - itemRatio)
+        } ?: AspectRatioOption.RATIO_4_3
         _uiState.update { state ->
             state.copy(
                 showExportStudioSheet = true,
                 exportTargetMedia = item,
                 exportJobState = ExportJobState.Idle,
                 exportConfig = state.exportConfig.copy(
-                    customWidth = item.width,
-                    customHeight = item.height,
+                    customWidth = item.width.coerceAtLeast(320),
+                    customHeight = item.height.coerceAtLeast(320),
+                    aspectRatio = matchedAspect,
+                    useCustomVideoSize = false,
                     videoResolution = state.videoResolution,
                     videoFps = state.videoFps,
-                    bitrateMbps = state.videoBitrateMbps
+                    bitrateMbps = state.videoBitrateMbps,
+                    photoFormat = state.photoFormat
                 )
             )
         }
@@ -1420,6 +1486,17 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
     fun selectTheme(theme: AppThemeOption) {
         triggerHaptic()
         viewModelScope.launch { repository.setTheme(theme) }
+    }
+
+    fun setCompactLayoutMode(mode: CompactLayoutMode) {
+        triggerHaptic()
+        _uiState.update {
+            it.copy(
+                compactLayoutMode = mode,
+                statusBannerMessage = "UI Density: ${mode.label} (${mode.description})"
+            )
+        }
+        viewModelScope.launch { repository.setCompactLayoutMode(mode) }
     }
 
     fun setHapticsEnabled(enabled: Boolean) {
