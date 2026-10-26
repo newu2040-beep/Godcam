@@ -47,8 +47,10 @@ import com.example.model.MeteringModeOption
 import com.example.model.PhotoFormat
 import com.example.model.ShutterSoundStyle
 import com.example.model.StabilizationMode
+import android.media.AudioManager
 import com.example.model.TimerOption
 import com.example.model.VideoCodecOption
+import com.example.model.VideoDurationOption
 import com.example.model.VideoFps
 import com.example.model.VideoResolution
 import com.example.model.WhiteBalancePreset
@@ -113,6 +115,8 @@ data class CameraUiState(
     val manualKelvin: Int = 5500,
     val focusMode: FocusModeOption = FocusModeOption.CONTINUOUS_AF,
     val manualFocusDistance: Float = 0.0f,
+    val macroModeEnabled: Boolean = false,
+    val showZoomSlider: Boolean = false,
     val meteringMode: MeteringModeOption = MeteringModeOption.MATRIX,
     val aeAfLocked: Boolean = false,
     val showHistogram: Boolean = false,
@@ -131,8 +135,12 @@ data class CameraUiState(
     val videoCodec: VideoCodecOption = VideoCodecOption.H264,
     val stabilizationMode: StabilizationMode = StabilizationMode.STANDARD,
     val colorProfile: ColorProfileOption = ColorProfileOption.STANDARD,
+    val videoDurationOption: VideoDurationOption = VideoDurationOption.CONTINUOUS,
+    val customVideoDurationSec: Int = 15,
+    val allowBackgroundMusic: Boolean = true,
     val audioMuted: Boolean = false,
     val isRecordingVideo: Boolean = false,
+    val isRecordingPaused: Boolean = false,
     val recordingElapsedSec: Int = 0,
     // Filter & Look state
     val activeRecipe: EditRecipe = EditRecipe(presetId = "fuji_pro_400h", intensity = 1.0f),
@@ -166,6 +174,14 @@ data class CameraUiState(
             w to h
         } else {
             aspectRatio.computeDimensionsForLongEdge(videoResolution.longEdge)
+        }
+    }
+
+    fun effectiveTargetVideoDurationSec(): Int {
+        return when (videoDurationOption) {
+            VideoDurationOption.CONTINUOUS -> 0
+            VideoDurationOption.CUSTOM -> customVideoDurationSec.coerceIn(1, 3600)
+            else -> videoDurationOption.seconds
         }
     }
 }
@@ -551,19 +567,131 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
 
     fun setManualFocusDistance(distance: Float?) {
         if (distance == null) {
-            _uiState.update { it.copy(focusMode = FocusModeOption.CONTINUOUS_AF) }
+            _uiState.update {
+                it.copy(
+                    focusMode = FocusModeOption.CONTINUOUS_AF,
+                    macroModeEnabled = false
+                )
+            }
         } else {
             _uiState.update {
                 it.copy(
                     focusMode = FocusModeOption.MANUAL,
+                    macroModeEnabled = distance >= 0.85f,
                     manualFocusDistance = distance.coerceIn(0f, 1f)
                 )
             }
         }
     }
 
+    fun toggleMacroMode() {
+        val next = !_uiState.value.macroModeEnabled
+        setMacroMode(next)
+    }
+
+    fun setMacroMode(enabled: Boolean) {
+        triggerHaptic()
+        _uiState.update { state ->
+            val nextZoom = if (enabled && state.activeZoom < 1.2f) {
+                1.4f.coerceIn(state.capabilities.minZoom, state.capabilities.maxZoom)
+            } else if (!enabled && kotlin.math.abs(state.activeZoom - 1.4f) < 0.08f) {
+                1.0f
+            } else {
+                state.activeZoom
+            }
+            state.copy(
+                macroModeEnabled = enabled,
+                focusMode = if (enabled) FocusModeOption.MACRO else FocusModeOption.CONTINUOUS_AF,
+                manualFocusDistance = if (enabled) 0.92f else 0.0f,
+                activeZoom = nextZoom,
+                statusBannerMessage = if (enabled) {
+                    "Macro Close-Up Mode Active • Optical Close Focus (${state.capabilities.minFocusDistanceDiopters.roundToInt()}D)"
+                } else {
+                    "Macro Mode Off • Standard Continuous AF-C"
+                }
+            )
+        }
+    }
+
+    fun toggleZoomSlider() {
+        triggerHaptic()
+        _uiState.update { it.copy(showZoomSlider = !it.showZoomSlider) }
+    }
+
+    fun setShowZoomSlider(show: Boolean) {
+        _uiState.update { it.copy(showZoomSlider = show) }
+    }
+
     fun setMeteringMode(mode: MeteringModeOption) {
+        triggerHaptic()
         _uiState.update { it.copy(meteringMode = mode, statusBannerMessage = "Metering: ${mode.label}") }
+    }
+
+    fun setColorProfile(profile: ColorProfileOption) {
+        triggerHaptic()
+        _uiState.update { it.copy(colorProfile = profile, statusBannerMessage = "Color Profile: ${profile.label}") }
+    }
+
+    fun setVideoDurationOption(option: VideoDurationOption) {
+        triggerHaptic()
+        _uiState.update { state ->
+            val msg = when (option) {
+                VideoDurationOption.CONTINUOUS -> "Video Duration: Continuous (Record until stopped)"
+                VideoDurationOption.CUSTOM -> "Video Duration: Custom (${state.customVideoDurationSec}s auto-stop & save)"
+                else -> "Video Duration: ${option.label} (Auto-stops & saves)"
+            }
+            state.copy(
+                videoDurationOption = option,
+                statusBannerMessage = msg
+            )
+        }
+    }
+
+    fun setCustomVideoDurationSec(seconds: Int) {
+        val safeSec = seconds.coerceIn(1, 3600)
+        _uiState.update {
+            it.copy(
+                videoDurationOption = VideoDurationOption.CUSTOM,
+                customVideoDurationSec = safeSec,
+                statusBannerMessage = "Custom Video Duration: ${safeSec}s (Auto-stop & save)"
+            )
+        }
+    }
+
+    fun setAllowBackgroundMusic(allow: Boolean) {
+        triggerHaptic()
+        if (allow) {
+            runCatching {
+                val am = getApplication<Application>().getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+                am?.mode = AudioManager.MODE_NORMAL
+            }
+        }
+        _uiState.update {
+            it.copy(
+                allowBackgroundMusic = allow,
+                statusBannerMessage = if (allow) {
+                    "Music Playback While Recording: Enabled (Background music continues playing)"
+                } else {
+                    "Music Playback While Recording: Disabled"
+                }
+            )
+        }
+    }
+
+    fun toggleVideoPauseResume() {
+        if (!_uiState.value.isRecordingVideo) return
+        triggerHaptic()
+        val nextPaused = !_uiState.value.isRecordingPaused
+        _uiState.update {
+            it.copy(
+                isRecordingPaused = nextPaused,
+                statusBannerMessage = if (nextPaused) {
+                    "Recording Paused at ${it.recordingElapsedSec}s — Tap Resume to continue"
+                } else {
+                    "Recording Resumed"
+                }
+            )
+        }
     }
 
     fun toggleHistogram() {
@@ -1058,21 +1186,36 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
     fun startVideoRecordingTimer() {
         triggerHaptic()
         val state = _uiState.value
+        // Keep AudioManager in MODE_NORMAL without requesting audio focus so background music keeps playing uninterrupted
+        if (state.allowBackgroundMusic) {
+            runCatching {
+                val am = getApplication<Application>().getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+                am?.mode = AudioManager.MODE_NORMAL
+            }
+        }
         ShutterSoundEngine.playVideoRecordTone(state.shutterSoundStyle, isStarting = true)
         val preset = FilterCatalog.getById(state.activeRecipe.presetId)
         val (vidW, vidH) = state.effectiveVideoDimensions()
+        val targetDur = state.effectiveTargetVideoDurationSec()
+        val durTag = if (targetDur > 0) "Auto-Stop ${targetDur}s" else "Continuous"
         _uiState.update {
             it.copy(
                 isRecordingVideo = true,
-                recordingElapsedSec = 1,
-                statusBannerMessage = "REC ${vidW}×${vidH} (${it.aspectRatio.label}) · ${it.videoFps.fps}fps · ${preset.name}"
+                isRecordingPaused = false,
+                recordingElapsedSec = 0,
+                statusBannerMessage = "REC ${vidW}×${vidH} (${it.aspectRatio.label}) · $durTag · ${preset.name}"
             )
         }
         recordingJob?.cancel()
         recordingJob = viewModelScope.launch {
             while (true) {
                 delay(1000)
-                _uiState.update { it.copy(recordingElapsedSec = it.recordingElapsedSec + 1) }
+                val current = _uiState.value
+                if (!current.isRecordingVideo) break
+                if (!current.isRecordingPaused) {
+                    val nextSec = current.recordingElapsedSec + 1
+                    _uiState.update { it.copy(recordingElapsedSec = nextSec) }
+                }
             }
         }
     }
@@ -1089,6 +1232,7 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
         _uiState.update {
             it.copy(
                 isRecordingVideo = false,
+                isRecordingPaused = false,
                 recordingElapsedSec = 0,
                 isCapturing = true
             )
@@ -1103,34 +1247,51 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
                 ?: ImageFilterEngine.createNeutralCalibrationBitmap(videoW, videoH)
 
             val recipeWithRatio = state.activeRecipe.copy(aspectRatio = state.aspectRatio)
+            val extraEv = state.exposureEv + if (state.colorProfile == ColorProfileOption.FLAT_NATURAL) 0.1f else 0f
 
-            // Apply the active film filter + EV + center-cropped aspect ratio to the video poster and live frames (never stretches)
-            val filteredPoster = ImageFilterEngine.renderFilteredBitmap(
-                source = rawFrame,
-                preset = preset,
-                recipe = recipeWithRatio,
-                targetWidth = videoW,
-                targetHeight = videoH,
-                applyCrop = !state.useCustomVideoSize,
-                extraEv = state.exposureEv
-            )
+            // Perform all bitmap filtering off the main thread on Dispatchers.Default so UI stays 60fps smooth
+            val (filteredPoster, filteredMotionFrames) = withContext(Dispatchers.Default) {
+                val poster = ImageFilterEngine.renderFilteredBitmap(
+                    source = rawFrame,
+                    preset = preset,
+                    recipe = recipeWithRatio,
+                    targetWidth = videoW,
+                    targetHeight = videoH,
+                    applyCrop = !state.useCustomVideoSize,
+                    extraEv = extraEv
+                )
 
-            val scaleDown = if (maxOf(videoW, videoH) > 1920) 1920f / maxOf(videoW, videoH).toFloat() else 1f
-            val frameTargetW = ((videoW * scaleDown).roundToInt().coerceAtLeast(320)).let { if (it % 2 != 0) it + 1 else it }
-            val frameTargetH = ((videoH * scaleDown).roundToInt().coerceAtLeast(320)).let { if (it % 2 != 0) it + 1 else it }
+                val scaleDown = if (maxOf(videoW, videoH) > 960) 960f / maxOf(videoW, videoH).toFloat() else 1f
+                val frameTargetW = ((videoW * scaleDown).roundToInt().coerceAtLeast(320)).let { if (it % 2 != 0) it + 1 else it }
+                val frameTargetH = ((videoH * scaleDown).roundToInt().coerceAtLeast(320)).let { if (it % 2 != 0) it + 1 else it }
 
-            val filteredMotionFrames = (if (capturedFrames.isNotEmpty()) capturedFrames else listOf(rawFrame)).mapNotNull { frame ->
-                runCatching {
-                    ImageFilterEngine.renderFilteredBitmap(
-                        source = frame,
-                        preset = preset,
-                        recipe = recipeWithRatio,
-                        targetWidth = frameTargetW,
-                        targetHeight = frameTargetH,
-                        applyCrop = !state.useCustomVideoSize,
-                        extraEv = state.exposureEv
-                    )
-                }.getOrNull()
+                val sourceList = if (capturedFrames.isNotEmpty()) capturedFrames else listOf(rawFrame)
+                val maxToRender = sourceList.size.coerceAtMost(96)
+                val sampledSources = if (sourceList.size <= maxToRender) {
+                    sourceList
+                } else {
+                    List(maxToRender) { i ->
+                        val idx = ((i.toFloat() / (maxToRender - 1).coerceAtLeast(1)) * (sourceList.size - 1))
+                            .toInt()
+                            .coerceIn(0, sourceList.lastIndex)
+                        sourceList[idx]
+                    }
+                }
+
+                val motionFrames = sampledSources.mapNotNull { frame ->
+                    runCatching {
+                        ImageFilterEngine.renderFilteredBitmap(
+                            source = frame,
+                            preset = preset,
+                            recipe = recipeWithRatio,
+                            targetWidth = frameTargetW,
+                            targetHeight = frameTargetH,
+                            applyCrop = !state.useCustomVideoSize,
+                            extraEv = extraEv
+                        )
+                    }.getOrNull()
+                }
+                poster to motionFrames
             }
 
             val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
@@ -1148,6 +1309,11 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
             )
             filteredPoster.recycle()
             filteredMotionFrames.forEach { runCatching { it.recycle() } }
+            capturedFrames.forEach { frame ->
+                if (frame !== rawFrame && frame !== _latestCameraFrame.value) {
+                    runCatching { frame.recycle() }
+                }
+            }
 
             val audioTag = state.audioRecordingFormat.label
             val title = "GODCAM_VID_${stamp.takeLast(6)}"
@@ -1165,20 +1331,20 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
                 sizeBytes = savedVideo.sizeBytes,
                 appliedPresetId = preset.id,
                 appliedIntensity = state.activeRecipe.intensity,
-                cameraInfo = "${savedVideo.actualWidth}×${savedVideo.actualHeight} • ${state.aspectRatio.label} • ${state.videoFps.fps}fps • ${state.videoBitrateMbps}Mbps • $audioTag • ${preset.name}"
+                cameraInfo = "${savedVideo.actualWidth}×${savedVideo.actualHeight} • ${duration}s • ${state.aspectRatio.label} • ${state.videoFps.fps}fps • ${state.stabilizationMode.label} • $audioTag • ${preset.name}"
             )
 
             MediaGallerySaver.sendAutoSaveNotification(
                 context = getApplication(),
                 title = "High-Quality Video Saved",
-                message = "$title (${savedVideo.actualWidth}×${savedVideo.actualHeight} ${state.videoFps.fps}fps • ${preset.name}) saved to DCIM/GODCAM."
+                message = "$title (${savedVideo.actualWidth}×${savedVideo.actualHeight} • ${duration}s • ${state.videoFps.fps}fps • ${preset.name}) saved to DCIM/GODCAM."
             )
 
             _uiState.update {
                 it.copy(
                     isCapturing = false,
                     selectedGalleryTab = GalleryTab.VIDEOS,
-                    statusBannerMessage = "Saved ${savedVideo.actualWidth}×${savedVideo.actualHeight} ${state.videoFps.fps}fps Video (${preset.name})"
+                    statusBannerMessage = "Saved ${duration}s Video (${savedVideo.actualWidth}×${savedVideo.actualHeight} ${state.videoFps.fps}fps • ${preset.name})"
                 )
             }
         }

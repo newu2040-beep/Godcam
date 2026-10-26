@@ -217,15 +217,26 @@ object MediaGallerySaver {
             fos.flush()
         }
 
-        // Save up to 24 aspect-ratio-accurate filtered motion frames alongside the video so FullScreenMediaViewer
-        // plays back smooth, zero-stretch, 100% color-accurate filtered motion frames
-        val framesToPersist = (if (capturedFrames.isNotEmpty()) capturedFrames else listOf(posterBitmap)).take(24)
+        // Save up to 96 aspect-ratio-accurate filtered motion frames evenly sampled across the entire recording
+        // so FullScreenMediaViewer plays back the full duration smoothly from start to finish without cutting off
+        val rawFrames = if (capturedFrames.isNotEmpty()) capturedFrames else listOf(posterBitmap)
+        val maxPersistCount = rawFrames.size.coerceAtMost(96)
+        val framesToPersist = if (rawFrames.size <= maxPersistCount) {
+            rawFrames
+        } else {
+            List(maxPersistCount) { i ->
+                val srcIdx = ((i.toFloat() / (maxPersistCount - 1).coerceAtLeast(1)) * (rawFrames.size - 1))
+                    .toInt()
+                    .coerceIn(0, rawFrames.lastIndex)
+                rawFrames[srcIdx]
+            }
+        }
         framesToPersist.forEachIndexed { idx, bmp ->
             if (!bmp.isRecycled) {
                 runCatching {
                     val frameFile = File(dir, "GODCAM_VID_POSTER_${stamp}_F$idx.jpg")
                     FileOutputStream(frameFile).use { fos ->
-                        bmp.compress(Bitmap.CompressFormat.JPEG, 95, fos)
+                        bmp.compress(Bitmap.CompressFormat.JPEG, 92, fos)
                     }
                 }
             }
@@ -251,11 +262,11 @@ object MediaGallerySaver {
             val targetMp4 = File(dir, "GODCAM_VID_$stamp.mp4")
             val (encodedW, encodedH) = encodeMp4AtSelectedResolution(
                 poster = posterBitmap,
-                capturedFrames = capturedFrames,
+                capturedFrames = framesToPersist,
                 outputFile = targetMp4,
                 targetWidth = width,
                 targetHeight = height,
-                durationSec = durationSec.coerceIn(1, 15),
+                durationSec = durationSec.coerceAtLeast(1),
                 fps = fps.coerceIn(24, 60),
                 bitrateMbps = bitrateMbps.coerceIn(12, 160)
             )
@@ -285,7 +296,7 @@ object MediaGallerySaver {
 
     /**
      * Loads the persisted filtered motion frames for a recorded video off the main thread so FullScreenMediaViewer
-     * displays smooth, zero-stretch, filter-accurate playback.
+     * displays smooth, zero-stretch, filter-accurate playback across the full recorded duration.
      */
     fun loadVideoFilteredFrames(posterPath: String): List<Bitmap> {
         if (posterPath.isBlank()) return emptyList()
@@ -293,7 +304,7 @@ object MediaGallerySaver {
         val parent = posterFile.parentFile ?: return emptyList()
         val baseName = posterFile.nameWithoutExtension
         val loaded = mutableListOf<Bitmap>()
-        for (idx in 0 until 24) {
+        for (idx in 0 until 96) {
             val f = File(parent, "${baseName}_F$idx.jpg")
             if (f.exists() && f.length() > 0L) {
                 runCatching {
@@ -447,7 +458,9 @@ object MediaGallerySaver {
                 var trackIndex = -1
                 var muxerStarted = false
 
-                val totalFrames = (durationSec.coerceIn(1, 5) * 10).coerceIn(sourceFrames.size.coerceAtLeast(16), 40)
+                val totalFrames = (durationSec.coerceAtLeast(1) * 8).coerceIn(sourceFrames.size.coerceAtLeast(24), 120)
+                val frameDurationUs = ((durationSec.coerceAtLeast(1) * 1_000_000L) / totalFrames.coerceAtLeast(1)).coerceAtLeast(16_666L)
+                var nextPtsUs = 0L
                 val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
                 val dstRect = android.graphics.Rect(0, 0, encW, encH)
                 val targetRatio = encW.toFloat() / encH.toFloat()
@@ -473,13 +486,32 @@ object MediaGallerySaver {
                         canvas.drawBitmap(frameBmp, srcRect, dstRect, paint)
                     }
                     inputSurface.unlockCanvasAndPost(canvas)
-                    drainEncoder(codec, muxer, bufferInfo, endOfStream = false, trackIndex, muxerStarted).also {
+                    drainEncoder(
+                        codec = codec,
+                        muxer = muxer,
+                        bufferInfo = bufferInfo,
+                        endOfStream = false,
+                        currentTrackIndex = trackIndex,
+                        currentMuxerStarted = muxerStarted,
+                        frameDurationUs = frameDurationUs,
+                        currentPtsUs = nextPtsUs
+                    ).also {
                         trackIndex = it.first
                         muxerStarted = it.second
+                        nextPtsUs = it.third
                     }
                 }
                 codec.signalEndOfInputStream()
-                drainEncoder(codec, muxer, bufferInfo, endOfStream = true, trackIndex, muxerStarted)
+                drainEncoder(
+                    codec = codec,
+                    muxer = muxer,
+                    bufferInfo = bufferInfo,
+                    endOfStream = true,
+                    currentTrackIndex = trackIndex,
+                    currentMuxerStarted = muxerStarted,
+                    frameDurationUs = frameDurationUs,
+                    currentPtsUs = nextPtsUs
+                )
                 codec.stop()
                 codec.release()
                 codec = null
@@ -513,10 +545,13 @@ object MediaGallerySaver {
         bufferInfo: MediaCodec.BufferInfo,
         endOfStream: Boolean,
         currentTrackIndex: Int,
-        currentMuxerStarted: Boolean
-    ): Pair<Int, Boolean> {
+        currentMuxerStarted: Boolean,
+        frameDurationUs: Long,
+        currentPtsUs: Long
+    ): Triple<Int, Boolean, Long> {
         var trackIndex = currentTrackIndex
         var muxerStarted = currentMuxerStarted
+        var ptsUs = currentPtsUs
         while (true) {
             val outIndex = codec.dequeueOutputBuffer(bufferInfo, 10_000L)
             if (outIndex == MediaCodec.INFO_TRY_AGAIN_LATER) {
@@ -529,7 +564,12 @@ object MediaGallerySaver {
                 }
             } else if (outIndex >= 0) {
                 val encodedData: ByteBuffer? = codec.getOutputBuffer(outIndex)
+                if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) {
+                    bufferInfo.size = 0
+                }
                 if (encodedData != null && bufferInfo.size > 0 && muxerStarted) {
+                    bufferInfo.presentationTimeUs = ptsUs
+                    ptsUs += frameDurationUs
                     encodedData.position(bufferInfo.offset)
                     encodedData.limit(bufferInfo.offset + bufferInfo.size)
                     muxer.writeSampleData(trackIndex, encodedData, bufferInfo)
@@ -540,6 +580,6 @@ object MediaGallerySaver {
                 }
             }
         }
-        return trackIndex to muxerStarted
+        return Triple(trackIndex, muxerStarted, ptsUs)
     }
 }

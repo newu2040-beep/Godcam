@@ -20,6 +20,7 @@ import android.os.StatFs
 import com.example.model.AudioRecordingFormat
 import com.example.model.HardwareCapabilities
 import com.example.model.PhotoFormat
+import com.example.model.StabilizationMode
 import com.example.model.VideoCodecOption
 import com.example.model.VideoFps
 import com.example.model.VideoResolution
@@ -50,12 +51,16 @@ object CameraCapabilityManager {
             var supportsRaw = false
             var supportsManualSensor = false
             var supportsManualFocus = false
+            var supportsMacroFocus = true
+            var minFocusDiopters = 10.0f
             var supportsOis = false
+            var supportsEis = false
+            var supportsPreviewStab = false
             var isoRange = 100..1600
             var exposureNsRange = 1_000_000L..250_000_000L
             var evRange = -2.0f..2.0f
             var minZoom = 1.0f
-            var maxZoom = 4.0f
+            var maxZoom = 8.0f
             var activeId = "0"
             var hwLevelLabel = "LIMITED"
             var focalLength = 4.2f
@@ -107,9 +112,20 @@ object CameraCapabilityManager {
 
                 val minFocusDist = chars.get(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE) ?: 0f
                 supportsManualFocus = minFocusDist > 0f
+                if (minFocusDist > 0f) {
+                    minFocusDiopters = minFocusDist
+                }
+                val afModes = chars.get(CameraCharacteristics.CONTROL_AF_AVAILABLE_MODES) ?: intArrayOf()
+                supportsMacroFocus = afModes.contains(CameraCharacteristics.CONTROL_AF_MODE_MACRO) || supportsManualFocus || !isFrontLens
 
                 val oisModes = chars.get(CameraCharacteristics.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION) ?: intArrayOf()
                 supportsOis = oisModes.contains(CameraCharacteristics.LENS_OPTICAL_STABILIZATION_MODE_ON)
+
+                val eisModes = chars.get(CameraCharacteristics.CONTROL_AVAILABLE_VIDEO_STABILIZATION_MODES) ?: intArrayOf()
+                supportsEis = eisModes.contains(CameraCharacteristics.CONTROL_VIDEO_STABILIZATION_MODE_ON)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    supportsPreviewStab = eisModes.contains(CameraCharacteristics.CONTROL_VIDEO_STABILIZATION_MODE_PREVIEW_STABILIZATION)
+                }
 
                 chars.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)?.firstOrNull()?.let {
                     focalLength = it
@@ -306,6 +322,17 @@ object CameraCapabilityManager {
 
             val supports8K = discoveredResolutions.contains(VideoResolution.UHD_8K)
 
+            val supportedStabilizationModes = buildList {
+                add(StabilizationMode.STANDARD)
+                if (supportsOis) {
+                    add(StabilizationMode.OPTICAL_OIS)
+                }
+                if (supportsOis || supportsPreviewStab || supportsEis) {
+                    add(StabilizationMode.CINEMA_LOCK)
+                }
+                add(StabilizationMode.OFF)
+            }.distinct()
+
             HardwareCapabilities(
                 activeCameraId = activeId,
                 hardwareLevelLabel = hwLevelLabel,
@@ -319,7 +346,10 @@ object CameraCapabilityManager {
                 supportsRawCapture = supportsRaw,
                 supportsManualSensor = supportsManualSensor,
                 supportsManualFocus = supportsManualFocus,
+                supportsMacroFocus = supportsMacroFocus,
+                minFocusDistanceDiopters = minFocusDiopters,
                 supportsOpticalStabilization = supportsOis,
+                supportedStabilizationModes = supportedStabilizationModes,
                 isoRange = isoRange,
                 exposureTimeRangeNs = exposureNsRange,
                 evRange = evRange,

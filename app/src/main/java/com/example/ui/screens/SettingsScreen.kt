@@ -528,6 +528,106 @@ fun SettingsScreen(
                             )
                         }
                     }
+
+                    Text("Hardware-Supported Video Stabilization", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        caps.supportedStabilizationModes.forEach { stab ->
+                            FilterChip(
+                                selected = uiState.stabilizationMode == stab,
+                                onClick = { viewModel.setStabilization(stab) },
+                                label = { Text(stab.label) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = MaterialTheme.colorScheme.primary,
+                                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                                ),
+                                modifier = Modifier.testTag("settings_stab_${stab.name}")
+                            )
+                        }
+                    }
+
+                    Text("Video Recording Duration (Continuous or Auto-Stop & Save)", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        com.example.model.VideoDurationOption.entries.forEach { dur ->
+                            FilterChip(
+                                selected = uiState.videoDurationOption == dur,
+                                onClick = { viewModel.setVideoDurationOption(dur) },
+                                label = {
+                                    Text(
+                                        if (dur == com.example.model.VideoDurationOption.CUSTOM) {
+                                            "Custom (${uiState.customVideoDurationSec}s)"
+                                        } else {
+                                            dur.label
+                                        }
+                                    )
+                                },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = MaterialTheme.colorScheme.primary,
+                                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                                ),
+                                modifier = Modifier.testTag("settings_video_duration_${dur.name}")
+                            )
+                        }
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.45f))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Allow Music Playback While Recording",
+                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.ExtraBold)
+                            )
+                            Text(
+                                text = "Keep background music playing uninterrupted during video capture",
+                                style = MaterialTheme.typography.labelMedium.copy(
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            )
+                        }
+                        Switch(
+                            checked = uiState.allowBackgroundMusic,
+                            onCheckedChange = { viewModel.setAllowBackgroundMusic(it) },
+                            modifier = Modifier.testTag("settings_allow_music_switch")
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Macro Close-Up Photography Mode",
+                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.ExtraBold)
+                            )
+                            Text(
+                                text = "Hardware macro auto-focus for detailed close-up photos & videos",
+                                style = MaterialTheme.typography.labelMedium.copy(
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            )
+                        }
+                        Switch(
+                            checked = uiState.macroModeEnabled,
+                            onCheckedChange = { viewModel.setMacroMode(it) },
+                            modifier = Modifier.testTag("settings_macro_mode_switch")
+                        )
+                    }
                 }
             }
 

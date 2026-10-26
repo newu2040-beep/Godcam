@@ -32,12 +32,21 @@ class ExampleRobolectricTest {
         assertEquals(presets.size, presets.map { it.id }.toSet().size)
         assertEquals(presets.size, presets.map { it.name }.toSet().size)
 
-        // Verify 20 aspect ratios and non-stretching dimension calculation
-        assertTrue(com.example.model.AspectRatioOption.entries.size >= 20)
+        // Verify 22 aspect ratios and non-stretching dimension calculation
+        assertTrue(com.example.model.AspectRatioOption.entries.size >= 22)
         val portrait916 = com.example.model.AspectRatioOption.RATIO_9_16.computeDimensionsForLongEdge(1920)
         assertEquals(1080 to 1920, portrait916)
         val landscape169 = com.example.model.AspectRatioOption.RATIO_16_9.computeDimensionsForLongEdge(1920)
         assertEquals(1920 to 1080, landscape169)
+
+        // Verify VideoDurationOption (Continuous vs preset/custom auto-stop)
+        assertEquals(0, com.example.model.VideoDurationOption.CONTINUOUS.seconds)
+        assertEquals(15, com.example.model.VideoDurationOption.SEC_15.seconds)
+        assertEquals(-1, com.example.model.VideoDurationOption.CUSTOM.seconds)
+
+        // Verify Macro Focus and Optical OIS Stabilization modes exist
+        assertTrue(com.example.model.FocusModeOption.MACRO in com.example.model.FocusModeOption.entries)
+        assertTrue(com.example.model.StabilizationMode.OPTICAL_OIS in com.example.model.StabilizationMode.entries)
 
         // Verify 15 themes including Pastel themes
         assertTrue(com.example.model.AppThemeOption.entries.size >= 15)

@@ -28,15 +28,17 @@ enum class AspectRatioOption(
     RATIO_3_4("3:4", 3f, 4f, false, "Vertical Full Sensor Portrait"),
     RATIO_16_9("16:9", 16f, 9f, false, "Widescreen HD / 4K Native"),
     RATIO_9_16("9:16", 9f, 16f, false, "Vertical Full-Frame Cinema / Story"),
+    RATIO_1_1("1:1", 1f, 1f, false, "Square Medium-Format 6×6"),
     RATIO_3_2("3:2", 3f, 2f, false, "Classic 35mm Film Frame"),
     RATIO_2_3("2:3", 2f, 3f, false, "Vertical 35mm Portrait Frame"),
-    RATIO_1_1("1:1", 1f, 1f, false, "Square Medium-Format 6×6"),
     RATIO_4_5("4:5", 4f, 5f, false, "Editorial Portrait 4×5"),
     RATIO_5_4("5:4", 5f, 4f, false, "Large-Format 5×4 Landscape"),
     RATIO_6_7("6:7", 6f, 7f, false, "Medium-Format 6×7 Portrait"),
     RATIO_7_6("7:6", 7f, 6f, false, "Medium-Format 7×6 Landscape"),
     RATIO_18_9("18:9", 18f, 9f, false, "Modern Mobile Full-Display 2:1"),
     RATIO_21_9("21:9", 21f, 9f, true, "Ultra-Wide Cinema 21:9"),
+    RATIO_1_43("1.43:1", 1.43f, 1f, false, "IMAX 70mm Full Frame 1.43:1"),
+    RATIO_1_618("1.618:1", 1.618f, 1f, false, "Golden Ratio Harmonic Frame"),
     GUIDE_1_85("1.85:1", 1.85f, 1f, true, "Academy Flat Theatrical Widescreen"),
     GUIDE_2_00("2.00:1", 2.0f, 1f, true, "Univisium 2:1 Widescreen Crop"),
     GUIDE_2_20("2.20:1", 2.2f, 1f, true, "70mm Todd-AO Widescreen Crop"),
@@ -82,6 +84,22 @@ enum class TimerOption(val seconds: Int, val label: String) {
     THREE_SEC(3, "3s"),
     FIVE_SEC(5, "5s"),
     TEN_SEC(10, "10s")
+}
+
+enum class VideoDurationOption(
+    val label: String,
+    val shortBadge: String,
+    val seconds: Int,
+    val description: String
+) {
+    CONTINUOUS("Continuous (Unlimited)", "∞", 0, "Records continuously until you tap Stop"),
+    SEC_3("3 Seconds", "3s", 3, "Automatically stops and saves after 3s"),
+    SEC_5("5 Seconds", "5s", 5, "Automatically stops and saves after 5s"),
+    SEC_10("10 Seconds", "10s", 10, "Automatically stops and saves after 10s"),
+    SEC_15("15 Seconds", "15s", 15, "Automatically stops and saves after 15s"),
+    SEC_30("30 Seconds", "30s", 30, "Automatically stops and saves after 30s"),
+    SEC_60("60 Seconds", "60s", 60, "Automatically stops and saves after 60s"),
+    CUSTOM("Custom Duration", "Custom", -1, "Set any custom recording duration in seconds")
 }
 
 enum class PhotoFormat(val label: String, val extension: String, val mimeType: String) {
@@ -136,6 +154,7 @@ enum class WhiteBalancePreset(val label: String, val kelvin: Int) {
 enum class FocusModeOption(val label: String) {
     CONTINUOUS_AF("AF-C"),
     TAP_AF("Tap AF"),
+    MACRO("Macro"),
     LOCKED_AF("AF Lock"),
     MANUAL("MF")
 }
@@ -147,14 +166,15 @@ enum class MeteringModeOption(val label: String) {
 }
 
 enum class StabilizationMode(val label: String, val description: String) {
-    STANDARD("Standard", "Balanced optical/electronic stabilization"),
-    CINEMA_LOCK("Locked", "Maximum horizon stabilization"),
+    STANDARD("Standard EIS", "Hardware electronic video stabilization"),
+    OPTICAL_OIS("Optical OIS", "Hardware lens optical stabilization"),
+    CINEMA_LOCK("Cinema Lock", "Maximum optical + electronic horizon lock"),
     OFF("Off", "Native unstabilized sensor readout")
 }
 
 enum class ColorProfileOption(val label: String, val description: String) {
     STANDARD("Rec.709 Standard", "Accurate contrast and natural saturation"),
-    FLAT_NATURAL("Natural Flat", "Reduced contrast & soft roll-off for post grading")
+    FLAT_NATURAL("Natural Flat / Log", "Wide dynamic range flat curve for color grading")
 }
 
 enum class ShutterSoundStyle(
@@ -489,7 +509,13 @@ data class HardwareCapabilities(
     val supportsRawCapture: Boolean = false,
     val supportsManualSensor: Boolean = false,
     val supportsManualFocus: Boolean = false,
+    val supportsMacroFocus: Boolean = true,
+    val minFocusDistanceDiopters: Float = 10.0f,
     val supportsOpticalStabilization: Boolean = false,
+    val supportedStabilizationModes: List<StabilizationMode> = listOf(
+        StabilizationMode.STANDARD,
+        StabilizationMode.OFF
+    ),
     val isoRange: IntRange = 100..1600,
     val exposureTimeRangeNs: LongRange = 1_000_000L..500_000_000L,
     val evRange: ClosedFloatingPointRange<Float> = -2.0f..2.0f,

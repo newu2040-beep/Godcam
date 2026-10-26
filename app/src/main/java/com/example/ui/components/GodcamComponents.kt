@@ -325,7 +325,7 @@ fun CircularIconControl(
 }
 
 /**
- * Bold Minimalist Segmented Pill Toggle (Photo | Video, Video | Pro Video, Photos | Videos | Favorites).
+ * Bold Minimalist Segmented Pill Toggle (Photo | Pro Photo | Video | Pro Video, etc.) with Compact Mode support.
  */
 @Composable
 fun <T> SegmentedPillSelector(
@@ -334,18 +334,23 @@ fun <T> SegmentedPillSelector(
     labelProvider: (T) -> String,
     onOptionSelected: (T) -> Unit,
     modifier: Modifier = Modifier,
+    isCompact: Boolean = false,
     testTagPrefix: String = "pill"
 ) {
+    val outerHeight = if (isCompact) 32.dp else 38.dp
+    val innerHeight = if (isCompact) 26.dp else 32.dp
+    val horizPad = if (isCompact) 11.dp else 15.dp
+
     Surface(
         shape = RoundedCornerShape(50),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.92f),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.94f),
         modifier = modifier
-            .height(40.dp)
+            .height(outerHeight)
             .border(1.2.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.55f), RoundedCornerShape(50))
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(3.dp)
+            modifier = Modifier.padding(2.5.dp)
         ) {
             options.forEach { option ->
                 val selected = option == selectedOption
@@ -360,18 +365,18 @@ fun <T> SegmentedPillSelector(
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier
-                        .height(34.dp)
+                        .height(innerHeight)
                         .clip(RoundedCornerShape(50))
                         .background(pillBg)
                         .clickable { onOptionSelected(option) }
-                        .padding(horizontal = 18.dp)
+                        .padding(horizontal = horizPad)
                         .testTag("${testTagPrefix}_${labelProvider(option).lowercase().replace(" ", "_")}")
                 ) {
                     Text(
                         text = labelProvider(option),
-                        style = MaterialTheme.typography.labelLarge.copy(
+                        style = (if (isCompact) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelLarge).copy(
                             color = pillText,
-                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
+                            fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.SemiBold
                         )
                     )
                 }
@@ -381,14 +386,16 @@ fun <T> SegmentedPillSelector(
 }
 
 /**
- * Tactile GODCAM Shutter / Video Record Button.
+ * Tactile Apple-inspired GODCAM Shutter / Video Record Button with Compact Mode and Pause state support.
  */
 @Composable
 fun GodcamShutterButton(
     isVideoMode: Boolean,
     isRecording: Boolean,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    isCompact: Boolean = false,
+    isPaused: Boolean = false
 ) {
     val scale by animateFloatAsState(
         targetValue = if (isRecording) 0.92f else 1.0f,
@@ -396,25 +403,29 @@ fun GodcamShutterButton(
         label = "shutterScale"
     )
 
+    val outerSize = if (isCompact) 58.dp else 74.dp
+    val normalInnerSize = if (isCompact) 44.dp else 58.dp
+    val recordingInnerSize = if (isCompact) 24.dp else 30.dp
+
     val outerRingColor = if (isVideoMode) {
         Color(0xFFD5D2C8)
     } else {
         GodcamMintAccent.copy(alpha = 0.6f)
     }
 
-    val innerFillColor = if (isVideoMode) {
-        GodcamRecordRed
-    } else {
-        GodcamForestActive
+    val innerFillColor = when {
+        isVideoMode && isPaused -> GodcamAmberGold
+        isVideoMode -> GodcamRecordRed
+        else -> GodcamForestActive
     }
 
     Box(
         contentAlignment = Alignment.Center,
         modifier = modifier
-            .size(76.dp)
+            .size(outerSize)
             .clip(CircleShape)
             .background(outerRingColor)
-            .border(3.dp, Color(0xFFFCFBF7), CircleShape)
+            .border(if (isCompact) 2.5.dp else 3.dp, Color(0xFFFCFBF7), CircleShape)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -424,13 +435,13 @@ fun GodcamShutterButton(
     ) {
         Box(
             modifier = Modifier
-                .size(if (isRecording) 32.dp else (60.dp * scale))
-                .clip(if (isRecording) RoundedCornerShape(9.dp) else CircleShape)
+                .size(if (isRecording) recordingInnerSize else (normalInnerSize * scale))
+                .clip(if (isRecording) RoundedCornerShape(8.dp) else CircleShape)
                 .background(innerFillColor)
                 .border(
                     width = 2.dp,
                     color = Color(0xFFFCFBF7).copy(alpha = 0.9f),
-                    shape = if (isRecording) RoundedCornerShape(9.dp) else CircleShape
+                    shape = if (isRecording) RoundedCornerShape(8.dp) else CircleShape
                 )
         )
     }
@@ -603,16 +614,38 @@ fun ViewfinderCompositionOverlays(
             }
         }
 
-        // 2. Cinematic Framing Guides (2.00:1, 2.20:1, 2.35:1, 2.39:1)
-        if (aspectRatio.isCinematicGuide) {
-            val guideHeight = (w / aspectRatio.aspectValue).coerceAtMost(h * 0.85f)
-            val barHeight = ((h - guideHeight) / 2f).coerceAtLeast(0f)
-            val maskColor = Color.Black.copy(alpha = 0.52f)
-            drawRect(maskColor, Offset(0f, 0f), Size(w, barHeight))
-            drawRect(maskColor, Offset(0f, h - barHeight), Size(w, barHeight))
-            val guideLine = GodcamAmberGold.copy(alpha = 0.8f)
-            drawLine(guideLine, Offset(0f, barHeight), Offset(w, barHeight), 1.2.dp.toPx())
-            drawLine(guideLine, Offset(0f, h - barHeight), Offset(w, h - barHeight), 1.2.dp.toPx())
+        // 2. Precision Aspect Ratio Framing Mask & Guides (for all 22 Photo & Video ratios)
+        val containerAspect = (w / h.coerceAtLeast(1f))
+        val targetAspect = aspectRatio.aspectValue
+        if (abs(containerAspect - targetAspect) > 0.08f) {
+            val maskColor = Color.Black.copy(alpha = if (aspectRatio.isCinematicGuide) 0.56f else 0.42f)
+            val guideLine = if (aspectRatio.isCinematicGuide) {
+                GodcamAmberGold.copy(alpha = 0.8f)
+            } else {
+                Color.White.copy(alpha = 0.45f)
+            }
+
+            if (targetAspect > containerAspect) {
+                // Target is wider than viewfinder -> top and bottom letterbox masks
+                val cropH = (w / targetAspect).coerceIn(40f, h)
+                val barH = ((h - cropH) / 2f).coerceAtLeast(0f)
+                if (barH > 2f) {
+                    drawRect(maskColor, Offset(0f, 0f), Size(w, barH))
+                    drawRect(maskColor, Offset(0f, h - barH), Size(w, barH))
+                    drawLine(guideLine, Offset(0f, barH), Offset(w, barH), 1.1.dp.toPx())
+                    drawLine(guideLine, Offset(0f, h - barH), Offset(w, h - barH), 1.1.dp.toPx())
+                }
+            } else {
+                // Target is narrower than viewfinder -> left and right pillarbox masks
+                val cropW = (h * targetAspect).coerceIn(40f, w)
+                val barW = ((w - cropW) / 2f).coerceAtLeast(0f)
+                if (barW > 2f) {
+                    drawRect(maskColor, Offset(0f, 0f), Size(barW, h))
+                    drawRect(maskColor, Offset(w - barW, 0f), Size(barW, h))
+                    drawLine(guideLine, Offset(barW, 0f), Offset(barW, h), 1.1.dp.toPx())
+                    drawLine(guideLine, Offset(w - barW, 0f), Offset(w - barW, h), 1.1.dp.toPx())
+                }
+            }
         }
 
         // 3. Focus Peaking assist highlight
