@@ -184,21 +184,8 @@ object ExportStudioEngine {
     }
 
     private fun loadSourceBitmap(context: Context, item: MediaItemModel): Bitmap {
-        if (item.filePath.isNotBlank()) {
-            val f = File(item.filePath)
-            if (f.exists()) {
-                BitmapFactory.decodeFile(f.absolutePath)?.let { return it }
-            }
-        }
-        if (item.uriString.isNotBlank()) {
-            runCatching {
-                val uri = Uri.parse(item.uriString)
-                context.contentResolver.openInputStream(uri)?.use { stream ->
-                    BitmapFactory.decodeStream(stream)?.let { return it }
-                }
-            }
-        }
-        return ImageFilterEngine.createCuratedSceneBitmap(item.sampleSceneIndex, 1280, 960)
+        return ImageFilterEngine.loadBitmapForMediaItem(context, item, 2560, 2560)
+            ?: ImageFilterEngine.createNeutralCalibrationBitmap(1280, 960)
     }
 
     private fun saveToMediaStore(context: Context, file: File, mimeType: String): Uri? {

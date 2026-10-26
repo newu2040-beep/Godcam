@@ -30,7 +30,7 @@ import androidx.compose.material.icons.outlined.CameraAlt
 import androidx.compose.material.icons.outlined.Memory
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.PrivacyTip
-import androidx.compose.material.icons.outlined.Storage
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -50,13 +50,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.data.UserPreferencesState
 import com.example.model.AppThemeOption
-import com.example.model.AspectRatioOption
 import com.example.model.GridMode
 import com.example.model.PhotoFormat
 import com.example.ui.AppDestination
 import com.example.ui.CameraUiState
 import com.example.ui.GodcamViewModel
 import com.example.ui.components.GodcamLensEmblem
+import com.example.ui.theme.JetBrainsMonoFamily
+import java.util.Locale
 
 @Composable
 fun SettingsScreen(
@@ -106,10 +107,10 @@ fun SettingsScreen(
                         )
                     }
                     Text(
-                        text = "Settings & Studio",
+                        text = "Settings & Hardware",
                         style = MaterialTheme.typography.headlineMedium.copy(
                             color = MaterialTheme.colorScheme.onBackground,
-                            fontWeight = FontWeight.SemiBold
+                            fontWeight = FontWeight.Bold
                         )
                     )
                 }
@@ -122,19 +123,102 @@ fun SettingsScreen(
                 ) {
                     Text(
                         text = "Hero Cover",
-                        style = MaterialTheme.typography.labelLarge,
+                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
                     )
                 }
             }
 
-            // 1. Themes & Personalization (PRD Section 12 — 8 Accessible Circular Swatches)
+            // 1. Real-Time Hardware Capability & Telemetry Matrix (Camera2, MediaCodecList, BatteryManager, PowerManager, StatFs)
             Surface(
                 shape = RoundedCornerShape(20.dp),
                 color = MaterialTheme.colorScheme.surface,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(20.dp))
+                    .border(1.2.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(20.dp))
+            ) {
+                Column(
+                    modifier = Modifier.padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Outlined.Memory,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Real-Time Hardware Telemetry",
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                            )
+                        }
+                        IconButton(
+                            onClick = { viewModel.refreshHardwareTelemetryNow() },
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.Refresh,
+                                contentDescription = "Refresh Hardware Telemetry",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                    Text(
+                        text = "Queried directly from Android Camera2 CameraCharacteristics, StreamConfigurationMap, MediaCodecList, BatteryManager, PowerManager, and StatFs.",
+                        style = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    CapabilityStatRow("Active Camera Sensor ID", "Camera #${caps.activeCameraId} (${caps.hardwareLevelLabel})")
+                    CapabilityStatRow("Optical Focal Length & Aperture", "${caps.focalLengthMm}mm • f/${caps.apertureF}")
+                    CapabilityStatRow("Max Sensor Still Resolution", "${caps.maxPhotoWidth} × ${caps.maxPhotoHeight} px")
+                    CapabilityStatRow("Optical Zoom Ratio Range", "${caps.minZoom}x – ${caps.maxZoom}x")
+                    CapabilityStatRow("Optical / Digital Stabilization", if (caps.supportsOpticalStabilization) "OIS + EIS Supported" else "EIS Digital Supported")
+                    CapabilityStatRow("Supported Video Resolutions", caps.supportedVideoResolutions.joinToString { it.shortLabel })
+                    CapabilityStatRow("Supported Target FPS Ranges", caps.supportedFpsChoices.joinToString { "${it.fps}fps" })
+                    CapabilityStatRow("Hardware Video Codecs", caps.supportedCodecs.joinToString { it.shortName })
+                    if (caps.encoderNames.isNotEmpty()) {
+                        CapabilityStatRow("MediaCodec Encoders", caps.encoderNames.joinToString())
+                    }
+                    CapabilityStatRow("ISO Sensitivity Range", "ISO ${caps.isoRange.first} – ${caps.isoRange.last}")
+                    CapabilityStatRow("Exposure Compensation Range", "${caps.evRange.start} EV to +${caps.evRange.endInclusive} EV")
+                    CapabilityStatRow("RAW (DNG) Sensor Support", if (caps.supportsRawCapture) "Supported" else "JPEG / HEIF Only")
+                    CapabilityStatRow("8K Native Hardware Support", if (caps.supports8K) "Supported" else "Not Supported")
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.45f))
+                    CapabilityStatRow(
+                        label = "Real-Time Accelerometer Tilt",
+                        value = String.format(Locale.US, "%+.1f°", uiState.deviceTiltDegrees)
+                    )
+                    CapabilityStatRow(
+                        label = "Battery Level & Temperature",
+                        value = "${caps.batteryPercent}% • ${caps.batteryTempCelsius}°C"
+                    )
+                    CapabilityStatRow("PowerManager Thermal Status", caps.thermalStatusLabel)
+                    CapabilityStatRow(
+                        label = "Device Storage (StatFs)",
+                        value = String.format(
+                            Locale.US,
+                            "%.1f GB free / %.1f GB total",
+                            caps.availableStorageMb / 1024f,
+                            caps.totalStorageMb / 1024f
+                        )
+                    )
+                }
+            }
+
+            // 2. Themes & Personalization (8 Accessible Circular Swatches)
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = MaterialTheme.colorScheme.surface,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.2.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(20.dp))
             ) {
                 Column(
                     modifier = Modifier.padding(18.dp),
@@ -148,7 +232,10 @@ fun SettingsScreen(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Column {
-                            Text("Themes & Personalization", style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                text = "Themes & Personalization",
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                            )
                             Text(
                                 text = "Active: ${preferences.theme.title} — ${preferences.theme.direction}",
                                 style = MaterialTheme.typography.bodyMedium.copy(
@@ -215,13 +302,13 @@ fun SettingsScreen(
                 }
             }
 
-            // 2. Capture Defaults & Haptics
+            // 3. Capture Defaults & Haptics
             Surface(
                 shape = RoundedCornerShape(20.dp),
                 color = MaterialTheme.colorScheme.surface,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(20.dp))
+                    .border(1.2.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(20.dp))
             ) {
                 Column(
                     modifier = Modifier.padding(18.dp),
@@ -234,7 +321,10 @@ fun SettingsScreen(
                             tint = MaterialTheme.colorScheme.primary
                         )
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Default Capture Preferences", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            text = "Default Capture Preferences",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                        )
                     }
 
                     Text("Default Composition Grid", style = MaterialTheme.typography.labelLarge)
@@ -279,7 +369,7 @@ fun SettingsScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Tactile Shutter & Dial Haptics", style = MaterialTheme.typography.titleSmall)
+                            Text("Tactile Shutter & Dial Haptics", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold))
                             Text(
                                 text = "Subtle vibration feedback on shutter, mode switch, and lens stops",
                                 style = MaterialTheme.typography.bodyMedium.copy(
@@ -296,49 +386,13 @@ fun SettingsScreen(
                 }
             }
 
-            // 3. Hardware Capability Matrix & Storage Inspector (PRD Section 3, 9, 14)
+            // 4. Privacy & Contextual Permissions
             Surface(
                 shape = RoundedCornerShape(20.dp),
                 color = MaterialTheme.colorScheme.surface,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(20.dp))
-            ) {
-                Column(
-                    modifier = Modifier.padding(18.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Outlined.Memory,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Runtime Hardware Capability Matrix", style = MaterialTheme.typography.titleMedium)
-                    }
-                    Text(
-                        text = "GODCAM inspects Camera2 & MediaCodec hardware at runtime so only supported resolutions, FPS, and codecs are offered.",
-                        style = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    CapabilityStatRow("Available Storage", "${caps.availableStorageMb / 1024} GB (${caps.availableStorageMb} MB free)")
-                    CapabilityStatRow("Thermal State", caps.thermalStatusLabel)
-                    CapabilityStatRow("Supported Video Profiles", caps.supportedVideoResolutions.joinToString { it.shortLabel })
-                    CapabilityStatRow("Hardware Video Encoders", caps.supportedCodecs.joinToString { it.label })
-                    CapabilityStatRow("ISO Sensitivity Range", "ISO ${caps.isoRange.first} – ${caps.isoRange.last}")
-                    CapabilityStatRow("Exposure Compensation", "${caps.evRange.start} EV to +${caps.evRange.endInclusive} EV")
-                    CapabilityStatRow("8K Native Hardware Support", if (caps.supports8K) "Supported" else "Not supported (Max 4K native)")
-                }
-            }
-
-            // 4. Privacy & Contextual Permissions (PRD Section 15)
-            Surface(
-                shape = RoundedCornerShape(20.dp),
-                color = MaterialTheme.colorScheme.surface,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(20.dp))
+                    .border(1.2.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(20.dp))
             ) {
                 Column(
                     modifier = Modifier.padding(18.dp),
@@ -351,7 +405,10 @@ fun SettingsScreen(
                             tint = MaterialTheme.colorScheme.primary
                         )
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Privacy & Contextual Permissions", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            text = "Privacy & Contextual Permissions",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                        )
                     }
                     Text(
                         text = "• Offline-First: No account, cloud upload, or internet is required. All 108 film looks, camera controls, and Export Studio run 100% locally on your device.\n• Zero-Permission Imports: External photos use the Android Photo Picker without broad storage access.",
@@ -364,7 +421,7 @@ fun SettingsScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Include Geotag / Location Metadata", style = MaterialTheme.typography.titleSmall)
+                            Text("Include Geotag / Location Metadata", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold))
                             Text(
                                 text = "Opt-in only; removable anytime in Export Studio",
                                 style = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -413,7 +470,7 @@ fun SettingsScreen(
                                 } else {
                                     "Allow All Permissions (Camera, Mic, Notifications & Gallery)"
                                 },
-                                style = MaterialTheme.typography.labelLarge
+                                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
                             )
                         }
                     }
@@ -431,7 +488,7 @@ fun SettingsScreen(
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
                     text = "GODCAM • Version 1.0",
-                    style = MaterialTheme.typography.titleSmall
+                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
                 )
                 Text(
                     text = "Capture More Than Moments.",
@@ -448,17 +505,21 @@ private fun CapabilityStatRow(label: String, value: String) {
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 3.dp),
-        horizontalArrangement = Arrangement.SpaceBetween
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
             text = label,
-            style = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
+            style = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurfaceVariant),
+            modifier = Modifier.weight(1f)
         )
+        Spacer(modifier = Modifier.width(8.dp))
         Text(
             text = value,
             style = MaterialTheme.typography.labelMedium.copy(
+                fontFamily = JetBrainsMonoFamily,
                 color = MaterialTheme.colorScheme.onSurface,
-                fontWeight = FontWeight.SemiBold
+                fontWeight = FontWeight.Bold
             )
         )
     }

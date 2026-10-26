@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import android.graphics.Bitmap
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
@@ -57,12 +58,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.FilterCatalog
 import com.example.data.ImageFilterEngine
 import com.example.model.EditRecipe
@@ -74,7 +77,7 @@ import com.example.ui.GodcamViewModel
 import com.example.ui.components.LabeledCameraSlider
 import com.example.ui.theme.GodcamAmberGold
 import com.example.ui.theme.GodcamForestActive
-import com.example.ui.theme.GodcamMintAccent
+import com.example.ui.theme.JetBrainsMonoFamily
 import kotlin.math.roundToInt
 
 @Composable
@@ -84,6 +87,9 @@ fun FiltersScreen(
     viewModel: GodcamViewModel,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
+    val latestCameraFrame by viewModel.latestCameraFrame.collectAsStateWithLifecycle()
+
     BackHandler {
         if (uiState.activeViewerMedia != null) {
             viewModel.navigateTo(AppDestination.GALLERY)
@@ -95,22 +101,29 @@ fun FiltersScreen(
     var showSearchBar by remember { mutableStateOf(false) }
     var showFineAdjustments by remember { mutableStateOf(false) }
 
-    val heroSceneIndex = uiState.activeViewerMedia?.sampleSceneIndex ?: 0 // Default 0 = Alpine Lake Island at Dawn
-    val heroBitmap = remember(heroSceneIndex) {
-        ImageFilterEngine.createCuratedSceneBitmap(heroSceneIndex, 1080, 720)
+    // Use real captured/gallery image or real live camera sensor frame; fallback to optical color-calibration chart
+    val heroBitmap = remember(uiState.activeViewerMedia?.id, uiState.activeViewerMedia?.filePath, latestCameraFrame) {
+        ImageFilterEngine.loadBitmapForMediaItem(context, uiState.activeViewerMedia, 1080, 720)
+            ?: latestCameraFrame
+            ?: ImageFilterEngine.createNeutralCalibrationBitmap(960, 640)
     }
-    val thumbBitmap = remember(heroSceneIndex) {
-        ImageFilterEngine.createCuratedSceneBitmap(heroSceneIndex, 280, 210)
+
+    val thumbBitmap = remember(heroBitmap) {
+        runCatching {
+            Bitmap.createScaledBitmap(heroBitmap, 260, 195, true)
+        }.getOrElse {
+            ImageFilterEngine.createNeutralCalibrationBitmap(260, 195)
+        }
     }
 
     val activePreset = remember(uiState.activeRecipe.presetId) {
         FilterCatalog.getById(uiState.activeRecipe.presetId)
     }
-    val heroColorMatrix = remember(activePreset, uiState.activeRecipe, uiState.isComparingOriginal) {
+    val heroColorMatrix = remember(activePreset, uiState.activeRecipe, uiState.isComparingOriginal, uiState.exposureEv) {
         if (uiState.isComparingOriginal) {
             ImageFilterEngine.buildComposeColorMatrix(FilterCatalog.allPresets.first(), EditRecipe(intensity = 0f))
         } else {
-            ImageFilterEngine.buildComposeColorMatrix(activePreset, uiState.activeRecipe)
+            ImageFilterEngine.buildComposeColorMatrix(activePreset, uiState.activeRecipe, uiState.exposureEv)
         }
     }
 
@@ -134,7 +147,6 @@ fun FiltersScreen(
         }
     }
 
-    // Order so the 9 signature presets shown in Screen 3 appear right at the top when "All" is selected
     val orderedPresets = remember(filteredPresets, uiState.selectedFilterFamily, uiState.filterSearchQuery) {
         if (uiState.selectedFilterFamily == FilterFamily.ALL && uiState.filterSearchQuery.isBlank()) {
             val priorityIds = listOf(
@@ -170,7 +182,7 @@ fun FiltersScreen(
                 .align(Alignment.Center)
                 .padding(horizontal = 16.dp, vertical = 8.dp)
         ) {
-            // 1. TOP HEADER (Matches Screen 3: "<"  "Filters"  "Save")
+            // 1. BOLD MINIMALIST TOP HEADER ("<"  "Filters"  "Apply / Save")
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -193,13 +205,24 @@ fun FiltersScreen(
                     )
                 }
 
-                Text(
-                    text = "Filters",
-                    style = MaterialTheme.typography.headlineMedium.copy(
-                        color = MaterialTheme.colorScheme.onBackground,
-                        fontWeight = FontWeight.SemiBold
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = "Filters",
+                        style = MaterialTheme.typography.headlineMedium.copy(
+                            color = MaterialTheme.colorScheme.onBackground,
+                            fontWeight = FontWeight.Bold
+                        )
                     )
-                )
+                    Text(
+                        text = if (uiState.captureMode.isVideo) "ACTIVE FOR PHOTO & VIDEO" else "108 ANALOG & FILM LOOKS",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontFamily = JetBrainsMonoFamily,
+                            fontSize = 9.5.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            letterSpacing = 0.8.sp
+                        )
+                    )
+                }
 
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -220,7 +243,14 @@ fun FiltersScreen(
                     }
 
                     Surface(
-                        onClick = { viewModel.applyFilterAndSave(heroBitmap) },
+                        onClick = {
+                            if (uiState.activeViewerMedia != null) {
+                                viewModel.applyFilterAndSave(heroBitmap)
+                            } else {
+                                // Apply filter to live Photo / Video viewfinder and return to Camera
+                                viewModel.navigateTo(AppDestination.CAMERA)
+                            }
+                        },
                         shape = RoundedCornerShape(50),
                         color = GodcamForestActive,
                         contentColor = Color(0xFFFCFBF7),
@@ -233,10 +263,10 @@ fun FiltersScreen(
                             modifier = Modifier.padding(horizontal = 18.dp)
                         ) {
                             Text(
-                                text = "Save",
+                                text = if (uiState.activeViewerMedia != null) "Save" else "Apply",
                                 style = MaterialTheme.typography.labelLarge.copy(
                                     color = Color(0xFFFCFBF7),
-                                    fontWeight = FontWeight.SemiBold
+                                    fontWeight = FontWeight.Bold
                                 )
                             )
                         }
@@ -265,13 +295,13 @@ fun FiltersScreen(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // 2. LARGE HERO PREVIEW CARD (Matches Screen 3 Alpine Lake Island preview)
+            // 2. LARGE REAL-TIME HERO PREVIEW CARD
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(212.dp)
+                    .height(210.dp)
                     .clip(RoundedCornerShape(18.dp))
-                    .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.6f), RoundedCornerShape(18.dp))
+                    .border(1.2.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.7f), RoundedCornerShape(18.dp))
                     .testTag("filters_hero_preview")
             ) {
                 Image(
@@ -285,7 +315,7 @@ fun FiltersScreen(
                 // Top-left Active Look Badge
                 Surface(
                     shape = RoundedCornerShape(50),
-                    color = Color(0xAA16221E),
+                    color = Color(0xBB101915),
                     contentColor = Color(0xFFFCFBF7),
                     modifier = Modifier
                         .align(Alignment.TopStart)
@@ -299,7 +329,7 @@ fun FiltersScreen(
                         },
                         style = MaterialTheme.typography.labelSmall.copy(
                             color = if (uiState.isComparingOriginal) GodcamAmberGold else Color(0xFFFCFBF7),
-                            fontWeight = FontWeight.SemiBold
+                            fontWeight = FontWeight.Bold
                         ),
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
                     )
@@ -317,8 +347,8 @@ fun FiltersScreen(
                     Surface(
                         onClick = { viewModel.setComparingOriginal(!uiState.isComparingOriginal) },
                         shape = RoundedCornerShape(50),
-                        color = if (uiState.isComparingOriginal) GodcamAmberGold else Color(0xAA16221E),
-                        contentColor = if (uiState.isComparingOriginal) Color(0xFF1A2420) else Color(0xFFFCFBF7),
+                        color = if (uiState.isComparingOriginal) GodcamAmberGold else Color(0xBB101915),
+                        contentColor = if (uiState.isComparingOriginal) Color(0xFF141E1A) else Color(0xFFFCFBF7),
                         modifier = Modifier.testTag("filters_compare_button")
                     ) {
                         Row(
@@ -333,7 +363,7 @@ fun FiltersScreen(
                             Spacer(modifier = Modifier.width(5.dp))
                             Text(
                                 text = if (uiState.isComparingOriginal) "Showing Original" else "Before / After",
-                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold)
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold)
                             )
                         }
                     }
@@ -341,7 +371,7 @@ fun FiltersScreen(
                     Surface(
                         onClick = { showFineAdjustments = !showFineAdjustments },
                         shape = RoundedCornerShape(50),
-                        color = if (showFineAdjustments) GodcamForestActive else Color(0xAA16221E),
+                        color = if (showFineAdjustments) GodcamForestActive else Color(0xBB101915),
                         contentColor = Color(0xFFFCFBF7),
                         modifier = Modifier.testTag("filters_adjust_toggle")
                     ) {
@@ -357,14 +387,14 @@ fun FiltersScreen(
                             Spacer(modifier = Modifier.width(5.dp))
                             Text(
                                 text = "Adjust (${(uiState.activeRecipe.intensity * 100).roundToInt()}%)",
-                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold)
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold)
                             )
                         }
                     }
                 }
             }
 
-            // Expandable Fine-Tuning Panel (Intensity 0-100%, Warmth, Contrast, Fade, Grain, Vignette)
+            // Expandable Fine-Tuning Panel (Intensity 0-100%, Warmth, Contrast, Grain)
             AnimatedVisibility(visible = showFineAdjustments) {
                 Surface(
                     shape = RoundedCornerShape(16.dp),
@@ -372,7 +402,7 @@ fun FiltersScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(top = 8.dp)
-                        .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(16.dp))
+                        .border(1.2.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(16.dp))
                 ) {
                     Column(
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
@@ -407,7 +437,7 @@ fun FiltersScreen(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // 3. CATEGORY FILTER CHIPS ROW (Matches Screen 3: All | Fuji | Kodak | Retro | Film | B&W | Instant | Nature | Portrait | Night | Creative)
+            // 3. CATEGORY FILTER CHIPS ROW (All | Fuji | Kodak | Retro | Film | B&W | Instant | Nature | Portrait | Night | Creative)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -433,7 +463,7 @@ fun FiltersScreen(
                         modifier = Modifier
                             .height(34.dp)
                             .border(
-                                width = 1.dp,
+                                width = 1.2.dp,
                                 color = if (selected) GodcamForestActive else MaterialTheme.colorScheme.outline,
                                 shape = RoundedCornerShape(50)
                             )
@@ -447,7 +477,7 @@ fun FiltersScreen(
                                 text = family.shortChip,
                                 style = MaterialTheme.typography.labelLarge.copy(
                                     color = chipText,
-                                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium
+                                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
                                 )
                             )
                         }
@@ -486,7 +516,7 @@ fun FiltersScreen(
 @Composable
 private fun FilterPresetCard(
     preset: FilterPreset,
-    thumbBitmap: android.graphics.Bitmap,
+    thumbBitmap: Bitmap,
     isSelected: Boolean,
     isFavorite: Boolean,
     onSelect: () -> Unit,
@@ -513,7 +543,7 @@ private fun FilterPresetCard(
                             .border(2.5.dp, GodcamForestActive, RoundedCornerShape(14.dp))
                             .padding(3.dp)
                     } else {
-                        Modifier
+                        Modifier.border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.45f), RoundedCornerShape(12.dp))
                     }
                 )
                 .clip(RoundedCornerShape(11.dp))
@@ -535,13 +565,13 @@ private fun FilterPresetCard(
                         .padding(5.dp)
                         .size(22.dp)
                         .clip(CircleShape)
-                        .background(Color(0x66121C18))
+                        .background(Color(0x88101815))
                         .clickable(onClick = onToggleFavorite)
                 ) {
                     Icon(
                         imageVector = if (isFavorite) Icons.Filled.Star else Icons.Outlined.StarOutline,
                         contentDescription = if (isFavorite) "Remove Favorite" else "Favorite Preset",
-                        tint = if (isFavorite) GodcamAmberGold else Color.White.copy(alpha = 0.85f),
+                        tint = if (isFavorite) GodcamAmberGold else Color.White.copy(alpha = 0.9f),
                         modifier = Modifier.size(13.dp)
                     )
                 }

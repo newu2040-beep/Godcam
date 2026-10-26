@@ -1,5 +1,10 @@
 package com.example.ui.screens
 
+import android.graphics.ColorMatrixColorFilter
+import android.graphics.RenderEffect
+import android.net.Uri
+import android.os.Build
+import android.widget.VideoView
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -46,7 +51,9 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.AddPhotoAlternate
+import androidx.compose.material.icons.outlined.CameraAlt
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Collections
 import androidx.compose.material.icons.outlined.Compare
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.FavoriteBorder
@@ -60,6 +67,7 @@ import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Tune
+import androidx.compose.material.icons.outlined.Videocam
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
@@ -97,9 +105,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import com.example.data.ExportStudioEngine
 import com.example.data.FilterCatalog
 import com.example.data.ImageFilterEngine
@@ -110,7 +119,6 @@ import com.example.model.ExportQualityPreset
 import com.example.model.MediaItemModel
 import com.example.model.PhotoFormat
 import com.example.model.VideoCodecOption
-import com.example.model.VideoFps
 import com.example.model.VideoResolution
 import com.example.ui.AppDestination
 import com.example.ui.CameraUiState
@@ -123,6 +131,7 @@ import com.example.ui.theme.GodcamForestActive
 import com.example.ui.theme.GodcamMintAccent
 import com.example.ui.theme.JetBrainsMonoFamily
 import kotlinx.coroutines.delay
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -147,7 +156,7 @@ fun GalleryAndExportScreen(
     val context = LocalContext.current
     var showSearchBar by remember { mutableStateOf(false) }
 
-    // Zero-permission Android Photo Picker for importing external media (PRD Section 3 & 10)
+    // Zero-permission Android Photo Picker for importing external media
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri ->
@@ -159,7 +168,7 @@ fun GalleryAndExportScreen(
     val filteredItems = remember(mediaItems, uiState.selectedGalleryTab, uiState.gallerySearchQuery) {
         mediaItems.filter { item ->
             val tabMatch = when (uiState.selectedGalleryTab) {
-                GalleryTab.PHOTOS -> true // Show all in main grid so 4K & 0:32 tiles match Screen 5 reference
+                GalleryTab.PHOTOS -> !item.isVideo || mediaItems.none { !it.isVideo }
                 GalleryTab.VIDEOS -> item.isVideo
                 GalleryTab.FAVORITES -> item.isFavorite
             }
@@ -202,7 +211,7 @@ fun GalleryAndExportScreen(
                 .align(Alignment.TopCenter)
                 .padding(horizontal = 16.dp, vertical = 8.dp)
         ) {
-            // 1. TOP GALLERY HEADER (Matches Screen 5: "Gallery"   Search   Import   More)
+            // 1. BOLD MINIMALIST GALLERY HEADER
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -226,7 +235,7 @@ fun GalleryAndExportScreen(
                         text = "Gallery",
                         style = MaterialTheme.typography.headlineLarge.copy(
                             color = MaterialTheme.colorScheme.onBackground,
-                            fontWeight = FontWeight.SemiBold
+                            fontWeight = FontWeight.Bold
                         )
                     )
                 }
@@ -298,7 +307,7 @@ fun GalleryAndExportScreen(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // 2. SEGMENTED PILL TABS (Matches Screen 5: "Photos" | "Videos" | "Favorites")
+            // 2. SEGMENTED PILL TABS ("Photos" | "Videos" | "Favorites")
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -316,38 +325,148 @@ fun GalleryAndExportScreen(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // 3. 3-COLUMN ADAPTIVE MEDIA GRID (Matches Screen 5 thumbnail layout, 4K & 0:32 badges)
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(3),
-                contentPadding = PaddingValues(
-                    bottom = if (uiState.showExportStudioSheet) 340.dp else 24.dp
-                ),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f)
-                    .testTag("gallery_media_grid")
-            ) {
-                items(filteredItems, key = { it.id }) { item ->
-                    GalleryThumbnailTile(
-                        item = item,
-                        isSelected = item.id in uiState.selectedMediaIds,
-                        multiSelectMode = uiState.multiSelectMode,
-                        onClick = {
-                            if (uiState.multiSelectMode) {
-                                viewModel.toggleMediaSelection(item.id)
-                            } else {
-                                viewModel.openMediaViewer(item)
+            // 3. REAL CAPTURED MEDIA GRID OR BOLD MINIMALIST EMPTY STATE (Zero fake demo images!)
+            if (filteredItems.isEmpty()) {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .testTag("gallery_empty_state")
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(24.dp),
+                        color = MaterialTheme.colorScheme.surface,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(1.2.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.6f), RoundedCornerShape(24.dp))
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.padding(horizontal = 28.dp, vertical = 36.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.Collections,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(44.dp)
+                            )
+                            Spacer(modifier = Modifier.height(14.dp))
+                            Text(
+                                text = "NO CAPTURES YET",
+                                style = MaterialTheme.typography.titleMedium.copy(
+                                    fontFamily = JetBrainsMonoFamily,
+                                    fontWeight = FontWeight.Bold,
+                                    letterSpacing = 1.4.sp
+                                )
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = "Every photo and video you shoot in GODCAM saves directly to your device's DCIM/GODCAM gallery at full hardware resolution with your selected film look.",
+                                style = MaterialTheme.typography.bodyMedium.copy(
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    textAlign = TextAlign.Center
+                                )
+                            )
+                            Spacer(modifier = Modifier.height(20.dp))
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Surface(
+                                    onClick = { viewModel.navigateTo(AppDestination.CAMERA) },
+                                    shape = RoundedCornerShape(50),
+                                    color = GodcamForestActive,
+                                    contentColor = Color(0xFFFCFBF7),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(46.dp)
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.Center,
+                                        modifier = Modifier.fillMaxSize()
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Outlined.CameraAlt,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = "Capture Now",
+                                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
+                                        )
+                                    }
+                                }
+                                Surface(
+                                    onClick = {
+                                        photoPickerLauncher.launch(
+                                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)
+                                        )
+                                    },
+                                    shape = RoundedCornerShape(50),
+                                    color = MaterialTheme.colorScheme.surfaceVariant,
+                                    contentColor = MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(46.dp)
+                                        .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(50))
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.Center,
+                                        modifier = Modifier.fillMaxSize()
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Outlined.AddPhotoAlternate,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = "Import Media",
+                                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
+                                        )
+                                    }
+                                }
                             }
-                        },
-                        onOpenExport = { viewModel.openExportStudio(item) }
-                    )
+                        }
+                    }
+                }
+            } else {
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(3),
+                    contentPadding = PaddingValues(
+                        bottom = if (uiState.showExportStudioSheet) 340.dp else 24.dp
+                    ),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .testTag("gallery_media_grid")
+                ) {
+                    items(filteredItems, key = { it.id }) { item ->
+                        GalleryThumbnailTile(
+                            item = item,
+                            isSelected = item.id in uiState.selectedMediaIds,
+                            multiSelectMode = uiState.multiSelectMode,
+                            onClick = {
+                                if (uiState.multiSelectMode) {
+                                    viewModel.toggleMediaSelection(item.id)
+                                } else {
+                                    viewModel.openMediaViewer(item)
+                                }
+                            },
+                            onOpenExport = { viewModel.openExportStudio(item) }
+                        )
+                    }
                 }
             }
         }
 
-        // 4. EXPORT STUDIO DOCKED SHEET (Matches bottom half of Screen 5 of reference image!)
+        // 4. EXPORT STUDIO DOCKED SHEET
         AnimatedVisibility(
             visible = uiState.showExportStudioSheet,
             modifier = Modifier.align(Alignment.BottomCenter)
@@ -370,17 +489,8 @@ private fun GalleryThumbnailTile(
     onOpenExport: () -> Unit
 ) {
     val context = LocalContext.current
-    val thumbBitmap = remember(item.id, item.filePath, item.sampleSceneIndex) {
+    val thumbBitmap = remember(item.id, item.filePath, item.uriString) {
         ImageFilterEngine.loadBitmapForMediaItem(context, item, 360, 360)
-    }
-    val preset = remember(item.appliedPresetId) {
-        FilterCatalog.getById(item.appliedPresetId)
-    }
-    val matrix = remember(preset, item.appliedIntensity) {
-        ImageFilterEngine.buildComposeColorMatrix(
-            preset,
-            EditRecipe(presetId = preset.id, intensity = item.appliedIntensity)
-        )
     }
 
     Box(
@@ -388,55 +498,73 @@ private fun GalleryThumbnailTile(
             .fillMaxWidth()
             .aspectRatio(1f)
             .clip(RoundedCornerShape(14.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f), RoundedCornerShape(14.dp))
             .clickable(onClick = onClick)
             .testTag("gallery_tile_${item.id}")
     ) {
-        Image(
-            bitmap = thumbBitmap.asImageBitmap(),
-            contentDescription = item.title,
-            contentScale = ContentScale.Crop,
-            colorFilter = ColorFilter.colorMatrix(matrix),
-            modifier = Modifier.fillMaxSize()
-        )
-
-        // Top-right "4K" or "RAW" badge (Matches Screen 5 Daisy tile!)
-        if (item.formatLabel == "4K" || item.formatLabel == "RAW") {
-            Surface(
-                shape = RoundedCornerShape(6.dp),
-                color = Color(0xD9FCFBF7),
-                contentColor = Color(0xFF1A2823),
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(6.dp)
+        if (thumbBitmap != null) {
+            // Note: Captured photos and video posters already have their active filter baked into the file on disk
+            Image(
+                bitmap = thumbBitmap.asImageBitmap(),
+                contentDescription = item.title,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        } else {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier.fillMaxSize()
             ) {
-                Text(
-                    text = item.formatLabel,
-                    style = MaterialTheme.typography.labelSmall.copy(
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold
-                    ),
-                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                Icon(
+                    imageVector = if (item.isVideo) Icons.Outlined.Videocam else Icons.Outlined.Collections,
+                    contentDescription = item.title,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
 
-        // Bottom video duration labels ("0:32") matching Screen 5 Old Town Spires tile
-        if (item.isVideo && item.durationSec > 0) {
-            val durText = String.format(Locale.US, "0:%02d", item.durationSec.coerceAtMost(59))
+        // Top-right Resolution / Format Badge ("4K", "1080p", "720p", "RAW", etc.)
+        Surface(
+            shape = RoundedCornerShape(6.dp),
+            color = Color(0xCC101915),
+            contentColor = Color(0xFFFCFBF7),
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(6.dp)
+        ) {
+            Text(
+                text = item.formatLabel,
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontFamily = JetBrainsMonoFamily,
+                    fontSize = 9.5.sp,
+                    fontWeight = FontWeight.Bold
+                ),
+                modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+            )
+        }
+
+        // Bottom video duration labels or photo export shortcut
+        if (item.isVideo) {
+            val mins = item.durationSec / 60
+            val secs = item.durationSec % 60
+            val durText = String.format(Locale.US, "%d:%02d", mins, secs)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .align(Alignment.BottomCenter)
-                    .background(Color(0x550E1613))
+                    .background(Color(0x990D1512))
                     .padding(horizontal = 7.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.SpaceBetween
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = durText,
+                    text = "${item.width}×${item.height}",
                     style = MaterialTheme.typography.labelSmall.copy(
                         fontFamily = JetBrainsMonoFamily,
-                        fontSize = 10.sp,
-                        color = Color.White
+                        fontSize = 9.sp,
+                        color = GodcamMintAccent,
+                        fontWeight = FontWeight.Bold
                     )
                 )
                 Text(
@@ -444,12 +572,12 @@ private fun GalleryThumbnailTile(
                     style = MaterialTheme.typography.labelSmall.copy(
                         fontFamily = JetBrainsMonoFamily,
                         fontSize = 10.sp,
-                        color = Color.White.copy(alpha = 0.85f)
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold
                     )
                 )
             }
         } else {
-            // Subtle bottom-right quick Export button on thumbnail
             Box(
                 contentAlignment = Alignment.Center,
                 modifier = Modifier
@@ -457,7 +585,7 @@ private fun GalleryThumbnailTile(
                     .padding(6.dp)
                     .size(24.dp)
                     .clip(CircleShape)
-                    .background(Color(0x7714201C))
+                    .background(Color(0x88101815))
                     .clickable(onClick = onOpenExport)
             ) {
                 Icon(
@@ -484,8 +612,7 @@ private fun GalleryThumbnailTile(
 }
 
 /**
- * Export Settings Sheet matching the bottom half of Screen 5 of the reference mockup
- * AND expandable for full PRD Section 11 Export Studio controls.
+ * Export Settings Sheet.
  */
 @Composable
 private fun ExportStudioCardSheet(
@@ -515,7 +642,7 @@ private fun ExportStudioCardSheet(
             .widthIn(max = 640.dp)
             .shadow(18.dp, RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
             .border(
-                width = 1.dp,
+                width = 1.2.dp,
                 color = MaterialTheme.colorScheme.outline.copy(alpha = 0.7f),
                 shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
             )
@@ -527,7 +654,6 @@ private fun ExportStudioCardSheet(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 22.dp, vertical = 18.dp)
         ) {
-            // Header: "Export Settings" and "×" close button (Exact match to Screen 5)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -538,13 +664,14 @@ private fun ExportStudioCardSheet(
                         text = "Export Settings",
                         style = MaterialTheme.typography.headlineMedium.copy(
                             color = MaterialTheme.colorScheme.onSurface,
-                            fontWeight = FontWeight.SemiBold
+                            fontWeight = FontWeight.Bold
                         )
                     )
                     if (target != null) {
                         Text(
                             text = "${target.title} • Est. $estimatedMb",
                             style = MaterialTheme.typography.labelSmall.copy(
+                                fontFamily = JetBrainsMonoFamily,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         )
@@ -566,12 +693,11 @@ private fun ExportStudioCardSheet(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // 4 Clean Interactive Summary Rows matching Screen 5 of Reference Image
             ExportSummaryRow(
                 label = "Resolution",
                 value = "${cfg.videoResolution.shortLabel} (${cfg.customWidth}×${cfg.customHeight})",
                 onClick = {
-                    val resList = VideoResolution.entries.filter { it != VideoResolution.UHD_8K || uiState.capabilities.supports8K }
+                    val resList = uiState.capabilities.supportedVideoResolutions
                     val next = resList[(resList.indexOf(cfg.videoResolution) + 1) % resList.size]
                     viewModel.updateExportConfig {
                         it.copy(
@@ -622,7 +748,6 @@ private fun ExportStudioCardSheet(
                 testTag = "export_row_quality"
             )
 
-            // Toggle for Full Custom Dimensions, Aspect Ratio Crop & Privacy Controls (PRD Section 11)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -662,7 +787,6 @@ private fun ExportStudioCardSheet(
                         .padding(vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    // Preset Quality Tiers
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -682,7 +806,6 @@ private fun ExportStudioCardSheet(
                         }
                     }
 
-                    // Custom Numeric Width & Height + Aspect Lock + Reset
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -733,7 +856,6 @@ private fun ExportStudioCardSheet(
                         )
                     }
 
-                    // Honest Upscale Notice per PRD Section 11 ("4K/8K and quality honesty")
                     if (isUpscaling) {
                         Surface(
                             shape = RoundedCornerShape(12.dp),
@@ -750,7 +872,6 @@ private fun ExportStudioCardSheet(
                         }
                     }
 
-                    // Aspect Ratio Crop Selector
                     Text("Aspect Ratio & Cinematic Crop", style = MaterialTheme.typography.labelLarge)
                     Row(
                         modifier = Modifier
@@ -769,7 +890,6 @@ private fun ExportStudioCardSheet(
                         }
                     }
 
-                    // Photo Compression Quality Slider
                     LabeledCameraSlider(
                         label = "Compression Quality",
                         valueText = "${cfg.jpegQuality}%",
@@ -780,7 +900,6 @@ private fun ExportStudioCardSheet(
                         }
                     )
 
-                    // Metadata & Audio Privacy Toggles
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -805,7 +924,6 @@ private fun ExportStudioCardSheet(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // Export Job Progress / Completion Status & Primary Export Pill Button
             when (val jobState = uiState.exportJobState) {
                 is ExportJobState.Running -> {
                     Column(
@@ -909,7 +1027,6 @@ private fun ExportStudioCardSheet(
                 ExportJobState.Idle -> Unit
             }
 
-            // Primary Pill "Export" Button matching Screen 5 of reference image
             Surface(
                 onClick = { viewModel.runExportJob() },
                 shape = RoundedCornerShape(50),
@@ -925,7 +1042,7 @@ private fun ExportStudioCardSheet(
                         text = "Export",
                         style = MaterialTheme.typography.titleMedium.copy(
                             color = Color(0xFFFCFBF7),
-                            fontWeight = FontWeight.SemiBold
+                            fontWeight = FontWeight.Bold
                         )
                     )
                 }
@@ -954,13 +1071,14 @@ private fun ExportSummaryRow(
             text = label,
             style = MaterialTheme.typography.titleSmall.copy(
                 color = MaterialTheme.colorScheme.onSurface,
-                fontWeight = FontWeight.Medium
+                fontWeight = FontWeight.SemiBold
             )
         )
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 text = value,
                 style = MaterialTheme.typography.bodyMedium.copy(
+                    fontFamily = JetBrainsMonoFamily,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             )
@@ -976,8 +1094,8 @@ private fun ExportSummaryRow(
 }
 
 /**
- * Full-Screen Photo & Video Media Viewer with Pinch/Double-Tap Zoom, Video Playback Controls,
- * Before/After Comparison, EXIF Details Dialog, Delete Confirmation, Share, and Export Studio launch.
+ * Full-Screen Photo & Real MP4 Video Media Viewer with Pinch/Double-Tap Zoom, Real VideoView Playback,
+ * Real-Time Filter RenderEffect on Video, EXIF Details Dialog, Delete Confirmation, Share, and Export Studio launch.
  */
 @Composable
 private fun FullScreenMediaViewer(
@@ -994,16 +1112,31 @@ private fun FullScreenMediaViewer(
     var showDetailsDialog by remember { mutableStateOf(false) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
 
-    // Video player state when viewing a video item
-    var isPlayingVideo by remember { mutableStateOf(false) }
+    // Real VideoView playback state when viewing a recorded MP4 video
+    var videoViewRef by remember { mutableStateOf<VideoView?>(null) }
+    var isPlayingVideo by remember { mutableStateOf(true) }
     var videoProgressSec by remember { mutableFloatStateOf(0f) }
     var videoMuted by remember { mutableStateOf(false) }
-    val totalVideoSec = item.durationSec.coerceAtLeast(15).toFloat()
+    val totalVideoSec = item.durationSec.coerceAtLeast(1).toFloat()
 
-    LaunchedEffect(isPlayingVideo) {
+    val mp4File = remember(item.uriString, item.filePath) {
+        val u = item.uriString
+        when {
+            u != null && u.endsWith(".mp4", ignoreCase = true) && File(u).exists() -> File(u)
+            item.filePath.endsWith(".mp4", ignoreCase = true) && File(item.filePath).exists() -> File(item.filePath)
+            else -> null
+        }
+    }
+
+    LaunchedEffect(isPlayingVideo, videoViewRef) {
         while (isPlayingVideo) {
-            delay(250)
-            videoProgressSec = if (videoProgressSec + 0.25f >= totalVideoSec) 0f else videoProgressSec + 0.25f
+            delay(200)
+            val vv = videoViewRef
+            if (vv != null && runCatching { vv.isPlaying }.getOrDefault(false)) {
+                videoProgressSec = (vv.currentPosition / 1000f).coerceIn(0f, totalVideoSec)
+            } else if (mp4File == null) {
+                videoProgressSec = if (videoProgressSec + 0.2f >= totalVideoSec) 0f else videoProgressSec + 0.2f
+            }
         }
     }
 
@@ -1012,19 +1145,21 @@ private fun FullScreenMediaViewer(
         offset = if (scale > 1f) offset + panChange else Offset.Zero
     }
 
-    val fullBitmap = remember(item.id, item.filePath, item.sampleSceneIndex) {
-        ImageFilterEngine.loadBitmapForMediaItem(context, item, 1280, 960)
+    val fullBitmap = remember(item.id, item.filePath, item.uriString) {
+        ImageFilterEngine.loadBitmapForMediaItem(context, item, 1600, 1200)
     }
     val preset = remember(item.appliedPresetId) {
         FilterCatalog.getById(item.appliedPresetId)
     }
-    val matrix = remember(preset, item.appliedIntensity, comparingOriginal) {
-        if (comparingOriginal) {
-            ImageFilterEngine.buildComposeColorMatrix(FilterCatalog.allPresets.first(), EditRecipe(intensity = 0f))
+
+    // Note: Saved photos already have `preset` baked in on disk; only apply inverse/neutral preview or video RenderEffect
+    val videoAndroidColorMatrix = remember(preset, item.appliedIntensity, comparingOriginal) {
+        if (comparingOriginal || preset.id == "original") {
+            android.graphics.ColorMatrix()
         } else {
-            ImageFilterEngine.buildComposeColorMatrix(
-                preset,
-                EditRecipe(presetId = preset.id, intensity = item.appliedIntensity)
+            ImageFilterEngine.buildAndroidColorMatrix(
+                preset = preset,
+                recipe = EditRecipe(presetId = preset.id, intensity = item.appliedIntensity)
             )
         }
     }
@@ -1032,7 +1167,7 @@ private fun FullScreenMediaViewer(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF101714))
+            .background(Color(0xFF0D1411))
             .statusBarsPadding()
             .navigationBarsPadding()
             .testTag("media_viewer_screen"),
@@ -1057,11 +1192,17 @@ private fun FullScreenMediaViewer(
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
                     text = item.title,
-                    style = MaterialTheme.typography.titleMedium.copy(color = Color.White)
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold
+                    )
                 )
                 Text(
-                    text = "${item.width}×${item.height} • ${preset.name}",
-                    style = MaterialTheme.typography.labelSmall.copy(color = GodcamMintAccent)
+                    text = "${item.width}×${item.height} • ${item.formatLabel} • ${preset.name}",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontFamily = JetBrainsMonoFamily,
+                        color = GodcamMintAccent
+                    )
                 )
             }
 
@@ -1083,7 +1224,7 @@ private fun FullScreenMediaViewer(
             }
         }
 
-        // Center Zoomable Image / Video Player Surface
+        // Center Zoomable Image / Real MP4 VideoView Surface
         Box(
             contentAlignment = Alignment.Center,
             modifier = Modifier
@@ -1099,29 +1240,68 @@ private fun FullScreenMediaViewer(
                     )
                 }
         ) {
-            Image(
-                bitmap = fullBitmap.asImageBitmap(),
-                contentDescription = item.title,
-                contentScale = ContentScale.Fit,
-                colorFilter = ColorFilter.colorMatrix(matrix),
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer(
-                        scaleX = scale,
-                        scaleY = scale,
-                        translationX = offset.x,
-                        translationY = offset.y
+            if (item.isVideo && mp4File != null) {
+                AndroidView(
+                    factory = { ctx ->
+                        VideoView(ctx).apply {
+                            setVideoURI(Uri.fromFile(mp4File))
+                            setOnPreparedListener { mp ->
+                                mp.isLooping = true
+                                val vol = if (videoMuted) 0f else 1f
+                                mp.setVolume(vol, vol)
+                                if (isPlayingVideo) start()
+                            }
+                            videoViewRef = this
+                        }
+                    },
+                    update = { vv ->
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                            if (comparingOriginal || preset.id == "original") {
+                                vv.setRenderEffect(null)
+                            } else {
+                                vv.setRenderEffect(
+                                    RenderEffect.createColorFilterEffect(
+                                        ColorMatrixColorFilter(videoAndroidColorMatrix)
+                                    )
+                                )
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else if (fullBitmap != null) {
+                val photoColorFilter = if (comparingOriginal) {
+                    // Neutralize saturation shift slightly to preview flat sensor baseline
+                    ColorFilter.colorMatrix(
+                        androidx.compose.ui.graphics.ColorMatrix().apply { setToSaturation(0.88f) }
                     )
-            )
+                } else {
+                    null
+                }
+                Image(
+                    bitmap = fullBitmap.asImageBitmap(),
+                    contentDescription = item.title,
+                    contentScale = ContentScale.Fit,
+                    colorFilter = photoColorFilter,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer(
+                            scaleX = scale,
+                            scaleY = scale,
+                            translationX = offset.x,
+                            translationY = offset.y
+                        )
+                )
+            }
 
-            // Video Player Overlay if item.isVideo
+            // Video Player Controls Overlay if item.isVideo
             if (item.isVideo) {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .fillMaxWidth()
-                        .background(Color(0x99101714))
+                        .background(Color(0xAA0D1411))
                         .padding(horizontal = 16.dp, vertical = 10.dp)
                 ) {
                     Row(
@@ -1129,7 +1309,15 @@ private fun FullScreenMediaViewer(
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         IconButton(
-                            onClick = { isPlayingVideo = !isPlayingVideo },
+                            onClick = {
+                                val nextPlay = !isPlayingVideo
+                                isPlayingVideo = nextPlay
+                                videoViewRef?.let { vv ->
+                                    runCatching {
+                                        if (nextPlay) vv.start() else vv.pause()
+                                    }
+                                }
+                            },
                             modifier = Modifier.size(36.dp)
                         ) {
                             Icon(
@@ -1139,8 +1327,13 @@ private fun FullScreenMediaViewer(
                             )
                         }
                         Slider(
-                            value = videoProgressSec,
-                            onValueChange = { videoProgressSec = it },
+                            value = videoProgressSec.coerceIn(0f, totalVideoSec),
+                            onValueChange = { sec ->
+                                videoProgressSec = sec
+                                videoViewRef?.let { vv ->
+                                    runCatching { vv.seekTo((sec * 1000).roundToInt()) }
+                                }
+                            },
                             valueRange = 0f..totalVideoSec,
                             modifier = Modifier
                                 .weight(1f)
@@ -1154,7 +1347,9 @@ private fun FullScreenMediaViewer(
                             )
                         )
                         IconButton(
-                            onClick = { videoMuted = !videoMuted },
+                            onClick = {
+                                videoMuted = !videoMuted
+                            },
                             modifier = Modifier.size(32.dp)
                         ) {
                             Icon(
@@ -1172,7 +1367,7 @@ private fun FullScreenMediaViewer(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(Color(0xFF16201C))
+                .background(Color(0xFF131D19))
                 .padding(horizontal = 12.dp, vertical = 12.dp),
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically
@@ -1214,7 +1409,7 @@ private fun FullScreenMediaViewer(
                         modifier = Modifier.size(16.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Export", style = MaterialTheme.typography.labelLarge)
+                    Text("Export", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold))
                 }
             }
         }
@@ -1223,21 +1418,22 @@ private fun FullScreenMediaViewer(
     // EXIF & Metadata Details Dialog
     if (showDetailsDialog) {
         val dateStr = remember(item.timestampMs) {
-            SimpleDateFormat("MMM dd, yyyy • HH:mm", Locale.US).format(Date(item.timestampMs))
+            SimpleDateFormat("MMM dd, yyyy • HH:mm:ss", Locale.US).format(Date(item.timestampMs))
         }
         AlertDialog(
             onDismissRequest = { showDetailsDialog = false },
-            title = { Text("Media & EXIF Metadata") },
+            title = { Text("Real Hardware & EXIF Metadata") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("Title: ${item.title}", fontWeight = FontWeight.SemiBold)
+                    Text("Title: ${item.title}", fontWeight = FontWeight.Bold)
                     Text("Captured: $dateStr")
-                    Text("Dimensions: ${item.width} × ${item.height} px")
+                    Text("Actual Dimensions: ${item.width} × ${item.height} px")
                     Text("Format: ${item.formatLabel}")
                     Text("File Size: ${String.format(Locale.US, "%.2f MB", item.sizeBytes / (1024f * 1024f))}")
                     if (item.isVideo) Text("Duration: ${item.durationSec} seconds")
                     Text("Applied Look: ${preset.name} (${(item.appliedIntensity * 100).roundToInt()}%)")
                     Text("Optical Telemetry: ${item.cameraInfo}")
+                    Text("File Path: ${item.filePath}", style = MaterialTheme.typography.labelSmall)
                 }
             },
             confirmButton = {
@@ -1248,12 +1444,12 @@ private fun FullScreenMediaViewer(
         )
     }
 
-    // Delete Confirmation Dialog (PRD Section 10)
+    // Delete Confirmation Dialog
     if (showDeleteConfirm) {
         AlertDialog(
             onDismissRequest = { showDeleteConfirm = false },
             title = { Text("Delete ${item.title}?") },
-            text = { Text("This removes the file from GODCAM Gallery. Exported copies in system Pictures remain untouched.") },
+            text = { Text("This removes the file from GODCAM Gallery. Copies in system DCIM/GODCAM remain untouched.") },
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -1295,7 +1491,10 @@ private fun ViewerActionButton(
         Spacer(modifier = Modifier.height(2.dp))
         Text(
             text = label,
-            style = MaterialTheme.typography.labelSmall.copy(color = Color.White.copy(alpha = 0.88f))
+            style = MaterialTheme.typography.labelSmall.copy(
+                color = Color.White.copy(alpha = 0.9f),
+                fontWeight = FontWeight.Medium
+            )
         )
     }
 }

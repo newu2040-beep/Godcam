@@ -56,7 +56,7 @@ enum class TimerOption(val seconds: Int, val label: String) {
 enum class PhotoFormat(val label: String, val extension: String, val mimeType: String) {
     JPEG("JPEG", "jpg", "image/jpeg"),
     PNG("PNG", "png", "image/png"),
-    WEBP("HEIF/WebP", "webp", "image/webp"),
+    WEBP("WebP", "webp", "image/webp"),
     RAW_DNG("RAW", "dng", "image/x-adobe-dng")
 }
 
@@ -67,6 +67,7 @@ enum class VideoResolution(
     val height: Int,
     val isUltraHigh: Boolean = false
 ) {
+    SD_480P("480p", "480p (720×480)", 720, 480, false),
     HD_720P("720p", "720p (1280×720)", 1280, 720, false),
     FHD_1080P("1080p", "1080p (1920×1080)", 1920, 1080, false),
     UHD_4K("4K", "4K (3840×2160)", 3840, 2160, true),
@@ -113,9 +114,9 @@ enum class MeteringModeOption(val label: String) {
 }
 
 enum class StabilizationMode(val label: String, val description: String) {
-    STANDARD("Standard", "Balanced optical/electronic stabilization with minimal crop"),
-    CINEMA_LOCK("Cinema Lock", "Heavy horizon smoothing (adds ~10% viewfinder crop)"),
-    OFF("Off", "Full native sensor readout with zero stabilization crop")
+    STANDARD("Standard", "Balanced optical/electronic stabilization"),
+    CINEMA_LOCK("Locked", "Maximum horizon stabilization"),
+    OFF("Off", "Native unstabilized sensor readout")
 }
 
 enum class ColorProfileOption(val label: String, val description: String) {
@@ -130,11 +131,11 @@ enum class ExportQualityPreset(
     val jpegQuality: Int,
     val bitrateMbps: Int
 ) {
-    EFFICIENT("Efficient", "Smaller shareable files", "Lower bitrate/quality within sensible limits", 75, 16),
-    BALANCED("Balanced", "Everyday use", "Good quality and moderate size", 88, 35),
-    HIGH("High", "Best practical quality", "Higher quality and larger output", 95, 100),
-    MAXIMUM("Maximum / Original", "Preservation", "Original stream or highest valid output", 100, 140),
-    CUSTOM("Custom", "Power users", "Manual dimensions, codec, FPS and bitrate", 92, 60)
+    EFFICIENT("Efficient", "Smaller shareable files", "Lower bitrate/quality within sensible limits", 75, 12),
+    BALANCED("Balanced", "Everyday use", "Good quality and moderate size", 88, 28),
+    HIGH("High", "Best practical quality", "Higher quality and larger output", 95, 65),
+    MAXIMUM("Maximum / Original", "Preservation", "Original stream or highest valid output", 100, 100),
+    CUSTOM("Custom", "Power users", "Manual dimensions, codec, FPS and bitrate", 92, 45)
 }
 
 enum class AppThemeOption(
@@ -268,57 +269,61 @@ data class EditRecipe(
 
 @Immutable
 data class HardwareCapabilities(
+    val activeCameraId: String = "0",
+    val hardwareLevelLabel: String = "LIMITED",
+    val focalLengthMm: Float = 4.2f,
+    val apertureF: Float = 1.8f,
+    val maxPhotoWidth: Int = 4032,
+    val maxPhotoHeight: Int = 3024,
     val hasBackCamera: Boolean = true,
     val hasFrontCamera: Boolean = true,
-    val hasFlashUnit: Boolean = true,
+    val hasFlashUnit: Boolean = false,
     val supportsRawCapture: Boolean = false,
-    val supportsManualSensor: Boolean = true,
-    val supportsManualFocus: Boolean = true,
-    val isoRange: IntRange = 50..3200,
-    val exposureTimeRangeNs: LongRange = 250_000L..1_000_000_000L, // 1/4000s .. 1s
+    val supportsManualSensor: Boolean = false,
+    val supportsManualFocus: Boolean = false,
+    val supportsOpticalStabilization: Boolean = false,
+    val isoRange: IntRange = 100..1600,
+    val exposureTimeRangeNs: LongRange = 1_000_000L..500_000_000L,
     val evRange: ClosedFloatingPointRange<Float> = -2.0f..2.0f,
-    val zoomStops: List<Float> = listOf(0.5f, 1.0f, 2.0f, 3.0f),
-    val maxZoom: Float = 6.0f,
+    val zoomStops: List<Float> = listOf(1.0f, 2.0f),
+    val minZoom: Float = 1.0f,
+    val maxZoom: Float = 4.0f,
     val supportedVideoResolutions: List<VideoResolution> = listOf(
         VideoResolution.HD_720P,
-        VideoResolution.FHD_1080P,
-        VideoResolution.UHD_4K
+        VideoResolution.FHD_1080P
+    ),
+    val supportedFpsChoices: List<VideoFps> = listOf(
+        VideoFps.FPS_24,
+        VideoFps.FPS_30,
+        VideoFps.FPS_60
     ),
     val supportedCodecs: List<VideoCodecOption> = listOf(
-        VideoCodecOption.H264,
-        VideoCodecOption.HEVC
+        VideoCodecOption.H264
     ),
+    val encoderNames: List<String> = emptyList(),
     val supports8K: Boolean = false,
-    val availableStorageMb: Long = 12_400L,
-    val thermalStatusLabel: String = "Nominal (34°C)"
+    val availableStorageMb: Long = 0L,
+    val totalStorageMb: Long = 0L,
+    val batteryTempCelsius: Float = 0f,
+    val batteryPercent: Int = 100,
+    val thermalStatusLabel: String = "Active"
 ) {
     fun validFpsFor(resolution: VideoResolution, codec: VideoCodecOption): List<VideoFps> {
+        val base = supportedFpsChoices.ifEmpty { listOf(VideoFps.FPS_24, VideoFps.FPS_30) }
         return when (resolution) {
-            VideoResolution.HD_720P -> listOf(
-                VideoFps.FPS_24, VideoFps.FPS_25, VideoFps.FPS_30,
-                VideoFps.FPS_50, VideoFps.FPS_60, VideoFps.FPS_120, VideoFps.FPS_240
-            )
-            VideoResolution.FHD_1080P -> listOf(
-                VideoFps.FPS_24, VideoFps.FPS_25, VideoFps.FPS_30,
-                VideoFps.FPS_50, VideoFps.FPS_60, VideoFps.FPS_120
-            )
-            VideoResolution.UHD_4K, VideoResolution.DCI_4K -> {
-                if (codec == VideoCodecOption.HEVC) {
-                    listOf(VideoFps.FPS_24, VideoFps.FPS_25, VideoFps.FPS_30, VideoFps.FPS_50, VideoFps.FPS_60)
-                } else {
-                    listOf(VideoFps.FPS_24, VideoFps.FPS_25, VideoFps.FPS_30, VideoFps.FPS_60)
-                }
-            }
-            VideoResolution.UHD_8K -> listOf(VideoFps.FPS_24, VideoFps.FPS_30)
+            VideoResolution.UHD_4K, VideoResolution.DCI_4K, VideoResolution.UHD_8K ->
+                base.filter { it.fps <= 60 }.ifEmpty { listOf(VideoFps.FPS_30) }
+            else -> base
         }
     }
 
     fun maxBitrateMbpsFor(resolution: VideoResolution, codec: VideoCodecOption): Int {
         return when (resolution) {
-            VideoResolution.HD_720P -> 50
-            VideoResolution.FHD_1080P -> 100
-            VideoResolution.UHD_4K, VideoResolution.DCI_4K -> if (codec == VideoCodecOption.HEVC) 160 else 120
-            VideoResolution.UHD_8K -> 200
+            VideoResolution.SD_480P -> 16
+            VideoResolution.HD_720P -> 40
+            VideoResolution.FHD_1080P -> 80
+            VideoResolution.UHD_4K, VideoResolution.DCI_4K -> if (codec == VideoCodecOption.HEVC) 140 else 100
+            VideoResolution.UHD_8K -> 180
         }
     }
 }
@@ -335,27 +340,27 @@ data class MediaItemModel(
     val height: Int,
     val durationSec: Int = 0,
     val formatLabel: String = "JPEG",
-    val sizeBytes: Long = 3_450_000L,
+    val sizeBytes: Long = 0L,
     val appliedPresetId: String = "original",
     val appliedIntensity: Float = 1.0f,
     val isFavorite: Boolean = false,
-    val cameraInfo: String = "24mm f/1.8 • ISO 100 • 1/250s",
+    val cameraInfo: String = "",
     val sampleSceneIndex: Int = 0
 )
 
 @Immutable
 data class ExportConfig(
     val qualityPreset: ExportQualityPreset = ExportQualityPreset.HIGH,
-    val customWidth: Int = 3840,
-    val customHeight: Int = 2160,
+    val customWidth: Int = 1920,
+    val customHeight: Int = 1080,
     val lockAspectRatio: Boolean = true,
     val aspectRatio: AspectRatioOption = AspectRatioOption.RATIO_4_3,
     val photoFormat: PhotoFormat = PhotoFormat.JPEG,
     val jpegQuality: Int = 95,
-    val videoResolution: VideoResolution = VideoResolution.UHD_4K,
-    val videoFps: VideoFps = VideoFps.FPS_60,
+    val videoResolution: VideoResolution = VideoResolution.FHD_1080P,
+    val videoFps: VideoFps = VideoFps.FPS_30,
     val videoCodec: VideoCodecOption = VideoCodecOption.H264,
-    val bitrateMbps: Int = 100,
+    val bitrateMbps: Int = 50,
     val keepAudio: Boolean = true,
     val preserveMetadata: Boolean = true
 )

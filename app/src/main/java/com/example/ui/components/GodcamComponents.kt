@@ -1,12 +1,10 @@
 package com.example.ui.components
 
-import android.graphics.Bitmap
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -40,26 +38,21 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.data.ImageFilterEngine
 import com.example.model.AspectRatioOption
 import com.example.model.GridMode
 import com.example.ui.theme.GodcamAmberGold
@@ -67,9 +60,10 @@ import com.example.ui.theme.GodcamForestActive
 import com.example.ui.theme.GodcamMintAccent
 import com.example.ui.theme.GodcamRecordRed
 import com.example.ui.theme.JetBrainsMonoFamily
+import kotlin.math.abs
 
 /**
- * Iconic circular GODCAM 3D Lens Emblem matching Page 1 of the PRD and Screen 1 of the reference image.
+ * Iconic circular GODCAM 3D Lens Emblem.
  */
 @Composable
 fun GodcamLensEmblem(
@@ -144,7 +138,8 @@ fun GodcamLensEmblem(
 }
 
 /**
- * Full-screen GODCAM Hero / Welcome Cover matching the 1st phone screen in the reference mockup.
+ * Bold Minimalist GODCAM Studio Cover — zero fake images, featuring architectural rangefinder marks
+ * and precision typography.
  */
 @Composable
 fun GodcamHeroSplashOverlay(
@@ -152,69 +147,78 @@ fun GodcamHeroSplashOverlay(
     onOpenGallery: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val alpineScene = remember { ImageFilterEngine.createCuratedSceneBitmap(0, 1080, 960) }
-
     Box(
         modifier = modifier
             .fillMaxSize()
             .background(Color(0xFFF7F3E9))
             .testTag("hero_splash_screen")
     ) {
-        // Bottom half Alpine Lake landscape blending seamlessly into the warm cream top
-        Image(
-            bitmap = alpineScene.asImageBitmap(),
-            contentDescription = "Alpine Lake Golden Hour Landscape",
-            contentScale = ContentScale.Crop,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(480.dp)
-                .align(Alignment.BottomCenter)
-        )
+        // Minimalist architectural rangefinder grid lines
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val w = size.width
+            val h = size.height
+            val gridStroke = 1.dp.toPx()
+            val ruleColor = Color(0xFF20332D).copy(alpha = 0.07f)
 
-        // Smooth top-to-bottom warm cream gradient blend over the landscape transition
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.verticalGradient(
-                        0.0f to Color(0xFFF7F3E9),
-                        0.44f to Color(0xFFF7F3E9),
-                        0.66f to Color(0xCCF7F3E9),
-                        0.82f to Color.Transparent,
-                        1.0f to Color(0x44101D18)
-                    )
-                )
-        )
+            drawLine(ruleColor, Offset(w * 0.12f, 0f), Offset(w * 0.12f, h), gridStroke)
+            drawLine(ruleColor, Offset(w * 0.88f, 0f), Offset(w * 0.88f, h), gridStroke)
+            drawLine(ruleColor, Offset(0f, h * 0.22f), Offset(w, h * 0.22f), gridStroke)
+            drawLine(ruleColor, Offset(0f, h * 0.72f), Offset(w, h * 0.72f), gridStroke)
+
+            // Precision optical ring at center
+            drawCircle(
+                color = Color(0xFF20332D).copy(alpha = 0.08f),
+                radius = w * 0.36f,
+                center = Offset(w / 2f, h * 0.42f),
+                style = Stroke(width = 1.dp.toPx())
+            )
+        }
 
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 28.dp, vertical = 36.dp),
+                .padding(horizontal = 28.dp, vertical = 42.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-            Spacer(modifier = Modifier.height(24.dp))
+            // Top Minimalist Spec Tag
+            Surface(
+                shape = RoundedCornerShape(50),
+                color = Color(0xFF20332D).copy(alpha = 0.08f)
+            ) {
+                Text(
+                    text = "OPTICAL STUDIO  •  108 ANALOG LOOKS  •  CAMERA2 PRO",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontFamily = JetBrainsMonoFamily,
+                        letterSpacing = 1.2.sp,
+                        color = Color(0xFF20332D),
+                        fontWeight = FontWeight.Bold
+                    ),
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                )
+            }
 
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                GodcamLensEmblem(size = 118.dp)
-                Spacer(modifier = Modifier.height(26.dp))
+                GodcamLensEmblem(size = 124.dp)
+                Spacer(modifier = Modifier.height(28.dp))
                 Text(
                     text = "G O D C A M",
                     style = MaterialTheme.typography.displayLarge.copy(
-                        fontSize = 32.sp,
-                        letterSpacing = 5.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color(0xFF20332D)
+                        fontSize = 34.sp,
+                        letterSpacing = 6.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF182823)
                     )
                 )
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(10.dp))
                 Text(
                     text = "Capture More Than Moments",
                     style = MaterialTheme.typography.bodyLarge.copy(
-                        color = Color(0xFF56655E),
-                        fontWeight = FontWeight.Medium
+                        color = Color(0xFF4E5E57),
+                        fontWeight = FontWeight.Medium,
+                        letterSpacing = 0.4.sp
                     )
                 )
             }
@@ -234,41 +238,43 @@ fun GodcamHeroSplashOverlay(
                         contentColor = Color(0xFFFCFBF7),
                         modifier = Modifier
                             .weight(1f)
-                            .height(52.dp)
+                            .height(54.dp)
                             .testTag("hero_enter_camera_button")
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             Text(
                                 text = "Open Camera",
-                                style = MaterialTheme.typography.titleMedium
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
                             )
                         }
                     }
                     Surface(
                         onClick = onOpenGallery,
                         shape = RoundedCornerShape(50),
-                        color = Color(0xE6FCFBF7),
-                        contentColor = Color(0xFF20332D),
+                        color = Color(0xFFFCFBF7),
+                        contentColor = Color(0xFF182823),
                         modifier = Modifier
                             .weight(1f)
-                            .height(52.dp)
+                            .height(54.dp)
+                            .border(1.5.dp, Color(0xFF182823).copy(alpha = 0.2f), RoundedCornerShape(50))
                             .testTag("hero_open_gallery_button")
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             Text(
                                 text = "Gallery & Looks",
-                                style = MaterialTheme.typography.titleMedium
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
                             )
                         }
                     }
                 }
                 Spacer(modifier = Modifier.height(18.dp))
                 Text(
-                    text = "Good Photos  •  Better Days",
-                    style = MaterialTheme.typography.bodyMedium.copy(
-                        color = Color(0xFFFCFBF7),
-                        letterSpacing = 0.8.sp,
-                        fontWeight = FontWeight.Medium
+                    text = "REAL-TIME HARDWARE TELEMETRY  •  ZERO SIMULATION",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontFamily = JetBrainsMonoFamily,
+                        color = Color(0xFF56655E),
+                        letterSpacing = 1.sp,
+                        fontWeight = FontWeight.SemiBold
                     )
                 )
             }
@@ -277,7 +283,7 @@ fun GodcamHeroSplashOverlay(
 }
 
 /**
- * Circular icon control with minimum 48dp touch target, subtle border, and selected mint fill state.
+ * Circular icon control with minimum 48dp touch target, crisp border, and active state.
  */
 @Composable
 fun CircularIconControl(
@@ -290,7 +296,7 @@ fun CircularIconControl(
     testTag: String? = null
 ) {
     val bgColor by animateColorAsState(
-        targetValue = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f),
+        targetValue = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.9f),
         label = "circleBg"
     )
     val contentColor by animateColorAsState(
@@ -305,7 +311,7 @@ fun CircularIconControl(
             .size(size)
             .clip(CircleShape)
             .background(bgColor)
-            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.6f), CircleShape)
+            .border(1.2.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.7f), CircleShape)
             .clickable(onClick = onClick)
             .let { if (testTag != null) it.testTag(testTag) else it }
     ) {
@@ -319,8 +325,7 @@ fun CircularIconControl(
 }
 
 /**
- * Segmented Pill Toggle (e.g., Photo | Video, Video | Pro Video, Photos | Videos | Favorites)
- * matching the exact pill geometry and #4D7766 active state from the reference design.
+ * Bold Minimalist Segmented Pill Toggle (Photo | Video, Video | Pro Video, Photos | Videos | Favorites).
  */
 @Composable
 fun <T> SegmentedPillSelector(
@@ -333,10 +338,10 @@ fun <T> SegmentedPillSelector(
 ) {
     Surface(
         shape = RoundedCornerShape(50),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.9f),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.92f),
         modifier = modifier
             .height(40.dp)
-            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.45f), RoundedCornerShape(50))
+            .border(1.2.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.55f), RoundedCornerShape(50))
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -366,7 +371,7 @@ fun <T> SegmentedPillSelector(
                         text = labelProvider(option),
                         style = MaterialTheme.typography.labelLarge.copy(
                             color = pillText,
-                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium
+                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
                         )
                     )
                 }
@@ -376,7 +381,7 @@ fun <T> SegmentedPillSelector(
 }
 
 /**
- * Tactile GODCAM Shutter / Video Record Button matching Screens 2 and 4 of the reference image.
+ * Tactile GODCAM Shutter / Video Record Button.
  */
 @Composable
 fun GodcamShutterButton(
@@ -394,7 +399,7 @@ fun GodcamShutterButton(
     val outerRingColor = if (isVideoMode) {
         Color(0xFFD5D2C8)
     } else {
-        GodcamMintAccent.copy(alpha = 0.55f)
+        GodcamMintAccent.copy(alpha = 0.6f)
     }
 
     val innerFillColor = if (isVideoMode) {
@@ -419,17 +424,20 @@ fun GodcamShutterButton(
     ) {
         Box(
             modifier = Modifier
-                .size(if (isRecording) 34.dp else (60.dp * scale))
-                .clip(if (isRecording) RoundedCornerShape(10.dp) else CircleShape)
+                .size(if (isRecording) 32.dp else (60.dp * scale))
+                .clip(if (isRecording) RoundedCornerShape(9.dp) else CircleShape)
                 .background(innerFillColor)
-                .border(2.dp, Color(0xFFFCFBF7).copy(alpha = 0.85f), if (isRecording) RoundedCornerShape(10.dp) else CircleShape)
+                .border(
+                    width = 2.dp,
+                    color = Color(0xFFFCFBF7).copy(alpha = 0.9f),
+                    shape = if (isRecording) RoundedCornerShape(9.dp) else CircleShape
+                )
         )
     }
 }
 
 /**
- * Labeled Slider with right-aligned tabular value + unit and optional one-tap Reset,
- * matching the Pro Video / Pro Photo sliders in Screen 4 of the reference image.
+ * Labeled Slider with right-aligned tabular value + unit and optional one-tap Reset.
  */
 @Composable
 fun LabeledCameraSlider(
@@ -453,7 +461,7 @@ fun LabeledCameraSlider(
                 text = label,
                 style = MaterialTheme.typography.titleSmall.copy(
                     color = MaterialTheme.colorScheme.onSurface,
-                    fontWeight = FontWeight.Medium
+                    fontWeight = FontWeight.SemiBold
                 )
             )
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -461,7 +469,8 @@ fun LabeledCameraSlider(
                     text = valueText,
                     style = MaterialTheme.typography.labelMedium.copy(
                         fontFamily = JetBrainsMonoFamily,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = FontWeight.SemiBold
                     )
                 )
                 if (onReset != null) {
@@ -492,15 +501,15 @@ fun LabeledCameraSlider(
             ),
             modifier = Modifier
                 .fillMaxWidth()
-                .height(32.dp)
+                .height(30.dp)
                 .testTag(testTag)
         )
     }
 }
 
 /**
- * Viewfinder Grid, Golden Ratio, Level, Cinematic Letterbox Guide, Focus Peaking,
- * and Tap-to-Focus Reticle Canvas Overlay.
+ * Viewfinder Grid, Golden Ratio, Real-time Accelerometer Horizon Level,
+ * Cinematic Letterbox Guide, Focus Peaking, and Tap-to-Focus Reticle Canvas Overlay.
  */
 @Composable
 fun ViewfinderCompositionOverlays(
@@ -510,12 +519,13 @@ fun ViewfinderCompositionOverlays(
     aeAfLocked: Boolean,
     showFocusPeaking: Boolean,
     showZebraStripes: Boolean,
+    deviceTiltDegrees: Float = 0f,
     modifier: Modifier = Modifier
 ) {
     Canvas(modifier = modifier.fillMaxSize()) {
         val w = size.width
         val h = size.height
-        val lineColor = Color.White.copy(alpha = 0.36f)
+        val lineColor = Color.White.copy(alpha = 0.38f)
         val strokeWidth = 1.dp.toPx()
 
         // 1. Grid / Composition lines
@@ -552,21 +562,43 @@ fun ViewfinderCompositionOverlays(
                     drawLine(lineColor, Offset(x, 0f), Offset(x, h), strokeWidth)
                     drawLine(lineColor, Offset(0f, y), Offset(w, y), strokeWidth)
                 }
-                // Horizon level bar in center
+                // Real-time Accelerometer Horizon Level Bar in center
                 val cy = h / 2f
                 val cx = w / 2f
+                val isLevel = abs(deviceTiltDegrees) <= 1.5f
+                val levelColor = if (isLevel) GodcamMintAccent else GodcamAmberGold
+
+                // Fixed reference ticks
                 drawLine(
-                    color = GodcamMintAccent,
-                    start = Offset(cx - 48.dp.toPx(), cy),
-                    end = Offset(cx + 48.dp.toPx(), cy),
-                    strokeWidth = 2.dp.toPx(),
+                    color = Color.White.copy(alpha = 0.55f),
+                    start = Offset(cx - 64.dp.toPx(), cy),
+                    end = Offset(cx - 46.dp.toPx(), cy),
+                    strokeWidth = 1.5.dp.toPx(),
                     cap = StrokeCap.Round
                 )
+                drawLine(
+                    color = Color.White.copy(alpha = 0.55f),
+                    start = Offset(cx + 46.dp.toPx(), cy),
+                    end = Offset(cx + 64.dp.toPx(), cy),
+                    strokeWidth = 1.5.dp.toPx(),
+                    cap = StrokeCap.Round
+                )
+
+                // Rotating live accelerometer horizon bar
+                rotate(degrees = -deviceTiltDegrees.coerceIn(-45f, 45f), pivot = Offset(cx, cy)) {
+                    drawLine(
+                        color = levelColor,
+                        start = Offset(cx - 42.dp.toPx(), cy),
+                        end = Offset(cx + 42.dp.toPx(), cy),
+                        strokeWidth = 2.4.dp.toPx(),
+                        cap = StrokeCap.Round
+                    )
+                }
                 drawCircle(
-                    color = GodcamMintAccent,
+                    color = levelColor,
                     radius = 4.dp.toPx(),
                     center = Offset(cx, cy),
-                    style = Stroke(width = 1.5.dp.toPx())
+                    style = Stroke(width = 1.6.dp.toPx())
                 )
             }
         }
@@ -575,17 +607,17 @@ fun ViewfinderCompositionOverlays(
         if (aspectRatio.isCinematicGuide) {
             val guideHeight = (w / aspectRatio.aspectValue).coerceAtMost(h * 0.85f)
             val barHeight = ((h - guideHeight) / 2f).coerceAtLeast(0f)
-            val maskColor = Color.Black.copy(alpha = 0.48f)
+            val maskColor = Color.Black.copy(alpha = 0.52f)
             drawRect(maskColor, Offset(0f, 0f), Size(w, barHeight))
             drawRect(maskColor, Offset(0f, h - barHeight), Size(w, barHeight))
-            val guideLine = GodcamAmberGold.copy(alpha = 0.75f)
+            val guideLine = GodcamAmberGold.copy(alpha = 0.8f)
             drawLine(guideLine, Offset(0f, barHeight), Offset(w, barHeight), 1.2.dp.toPx())
             drawLine(guideLine, Offset(0f, h - barHeight), Offset(w, h - barHeight), 1.2.dp.toPx())
         }
 
         // 3. Focus Peaking assist highlight
         if (showFocusPeaking) {
-            val peakColor = Color(0xFF4FFFB0).copy(alpha = 0.55f)
+            val peakColor = Color(0xFF4FFFB0).copy(alpha = 0.65f)
             drawRoundRect(
                 color = peakColor,
                 topLeft = Offset(w * 0.28f, h * 0.24f),
@@ -597,7 +629,7 @@ fun ViewfinderCompositionOverlays(
 
         // 4. Zebra Exposure Clipping Stripes assist
         if (showZebraStripes) {
-            val zebraColor = Color.White.copy(alpha = 0.28f)
+            val zebraColor = Color.White.copy(alpha = 0.32f)
             var zx = w * 0.6f
             while (zx < w * 0.9f) {
                 drawLine(
@@ -642,10 +674,10 @@ fun LiveHistogramOverlay(
 ) {
     Surface(
         shape = RoundedCornerShape(10.dp),
-        color = Color(0xAA14201C),
+        color = Color(0xBB101A16),
         modifier = modifier
-            .size(width = 96.dp, height = 46.dp)
-            .border(1.dp, Color.White.copy(alpha = 0.22f), RoundedCornerShape(10.dp))
+            .size(width = 98.dp, height = 46.dp)
+            .border(1.dp, Color.White.copy(alpha = 0.24f), RoundedCornerShape(10.dp))
     ) {
         Canvas(modifier = Modifier.fillMaxSize().padding(6.dp)) {
             if (bins.isEmpty()) return@Canvas
@@ -662,7 +694,7 @@ fun LiveHistogramOverlay(
             }
             drawPath(
                 path = path,
-                color = GodcamMintAccent.copy(alpha = 0.65f)
+                color = GodcamMintAccent.copy(alpha = 0.72f)
             )
         }
     }

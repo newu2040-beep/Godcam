@@ -15,6 +15,7 @@ import android.graphics.Paint
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
+import android.media.MediaMetadataRetriever
 import android.media.MediaMuxer
 import android.media.MediaScannerConnection
 import android.net.Uri
@@ -36,6 +37,8 @@ data class SavedMediaResult(
     val localFile: File,
     val posterFile: File,
     val mediaStoreUri: Uri?,
+    val actualWidth: Int,
+    val actualHeight: Int,
     val sizeBytes: Long
 )
 
@@ -118,28 +121,38 @@ object MediaGallerySaver {
             fos.flush()
         }
 
-        val mediaStoreUri = publishImageToMediaStore(context, localFile, fileName, mimeType)
+        val mediaStoreUri = publishImageToMediaStore(
+            context = context,
+            sourceFile = localFile,
+            displayName = fileName,
+            mimeType = mimeType,
+            width = bitmap.width,
+            height = bitmap.height
+        )
 
         SavedMediaResult(
             localFile = localFile,
             posterFile = localFile,
             mediaStoreUri = mediaStoreUri,
-            sizeBytes = localFile.length().coerceAtLeast(512_000L)
+            actualWidth = bitmap.width,
+            actualHeight = bitmap.height,
+            sizeBytes = localFile.length()
         )
     }
 
     /**
-     * Automatically saves a recorded video (.mp4) + poster frame (.jpg) to both app storage
-     * and the system Android Gallery (MediaStore.Video.Media under DCIM/GODCAM).
+     * Automatically saves a recorded video (.mp4) + filtered poster frame (.jpg) at the selected
+     * resolution into both app storage and the system Android Gallery (MediaStore.Video.Media under DCIM/GODCAM).
      */
     suspend fun saveVideoToGallery(
         context: Context,
         posterBitmap: Bitmap,
         existingMp4File: File? = null,
         durationSec: Int = 5,
-        width: Int = 1280,
-        height: Int = 720,
-        fps: Int = 30
+        width: Int = 1920,
+        height: Int = 1080,
+        fps: Int = 30,
+        bitrateMbps: Int = 24
     ): SavedMediaResult = withContext(Dispatchers.IO) {
         val dir = File(context.filesDir, "godcam_media").apply { mkdirs() }
         val stamp = System.currentTimeMillis()
@@ -150,11 +163,36 @@ object MediaGallerySaver {
             fos.flush()
         }
 
+        var actualW = width
+        var actualH = height
+
         val mp4File = if (existingMp4File != null && existingMp4File.exists() && existingMp4File.length() > 0L) {
+            // Read actual recorded dimensions from the CameraX MP4 file via MediaMetadataRetriever
+            runCatching {
+                val retriever = MediaMetadataRetriever()
+                retriever.setDataSource(existingMp4File.absolutePath)
+                val vw = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull()
+                val vh = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull()
+                if (vw != null && vh != null && vw > 0 && vh > 0) {
+                    actualW = vw
+                    actualH = vh
+                }
+                retriever.release()
+            }
             existingMp4File
         } else {
             val targetMp4 = File(dir, "GODCAM_VID_$stamp.mp4")
-            encodeMp4FromPoster(posterBitmap, targetMp4, durationSec.coerceIn(1, 10), fps.coerceIn(24, 60))
+            val (encodedW, encodedH) = encodeMp4AtSelectedResolution(
+                poster = posterBitmap,
+                outputFile = targetMp4,
+                targetWidth = width,
+                targetHeight = height,
+                durationSec = durationSec.coerceIn(1, 10),
+                fps = fps.coerceIn(24, 60),
+                bitrateMbps = bitrateMbps.coerceIn(8, 100)
+            )
+            actualW = encodedW
+            actualH = encodedH
             targetMp4
         }
 
@@ -163,15 +201,17 @@ object MediaGallerySaver {
             videoFile = mp4File,
             fileName = mp4File.name,
             durationMs = durationSec.coerceAtLeast(1) * 1000L,
-            width = width,
-            height = height
+            width = actualW,
+            height = actualH
         )
 
         SavedMediaResult(
             localFile = mp4File,
             posterFile = posterFile,
             mediaStoreUri = mediaStoreUri,
-            sizeBytes = mp4File.length().coerceAtLeast(posterFile.length() * 3L)
+            actualWidth = actualW,
+            actualHeight = actualH,
+            sizeBytes = mp4File.length().coerceAtLeast(posterFile.length())
         )
     }
 
@@ -179,13 +219,17 @@ object MediaGallerySaver {
         context: Context,
         sourceFile: File,
         displayName: String,
-        mimeType: String
+        mimeType: String,
+        width: Int,
+        height: Int
     ): Uri? {
         return runCatching {
             val resolver = context.contentResolver
             val values = ContentValues().apply {
                 put(MediaStore.Images.Media.DISPLAY_NAME, displayName)
                 put(MediaStore.Images.Media.MIME_TYPE, mimeType)
+                put(MediaStore.Images.Media.WIDTH, width)
+                put(MediaStore.Images.Media.HEIGHT, height)
                 put(MediaStore.Images.Media.DATE_ADDED, System.currentTimeMillis() / 1000)
                 put(MediaStore.Images.Media.DATE_TAKEN, System.currentTimeMillis())
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -255,69 +299,90 @@ object MediaGallerySaver {
     }
 
     /**
-     * Generates a valid H.264 MP4 video file from the rendered viewfinder bitmap so recorded videos
-     * are real MP4 containers saved into MediaStore.Video.Media even on emulators without hardware camera encoders.
+     * Encodes an H.264 MP4 video at the user's selected resolution (falling back gracefully to 1080p/720p
+     * if the device's hardware encoder rejects 4K Surface allocation) so the output MP4 matches the selected profile.
      */
-    private fun encodeMp4FromPoster(
+    private fun encodeMp4AtSelectedResolution(
         poster: Bitmap,
         outputFile: File,
+        targetWidth: Int,
+        targetHeight: Int,
         durationSec: Int,
-        fps: Int
-    ) {
-        val encW = 640
-        val encH = 480
-        var codec: MediaCodec? = null
-        var muxer: MediaMuxer? = null
-        try {
-            val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, encW, encH).apply {
-                setInteger(
-                    MediaFormat.KEY_COLOR_FORMAT,
-                    MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface
-                )
-                setInteger(MediaFormat.KEY_BIT_RATE, 2_500_000)
-                setInteger(MediaFormat.KEY_FRAME_RATE, fps)
-                setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
-            }
-            codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
-            codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-            val inputSurface = codec.createInputSurface()
-            codec.start()
+        fps: Int,
+        bitrateMbps: Int
+    ): Pair<Int, Int> {
+        val candidateDimensions = listOf(
+            (targetWidth.let { if (it % 2 != 0) it - 1 else it }) to (targetHeight.let { if (it % 2 != 0) it - 1 else it }),
+            1920 to 1080,
+            1280 to 720,
+            640 to 480
+        ).distinct()
 
-            muxer = MediaMuxer(outputFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-            val bufferInfo = MediaCodec.BufferInfo()
-            var trackIndex = -1
-            var muxerStarted = false
-
-            val totalFrames = (durationSec.coerceIn(1, 4) * 15).coerceIn(15, 45)
-            val paint = Paint(Paint.FILTER_BITMAP_FLAG)
-            val scaled = Bitmap.createScaledBitmap(poster, encW, encH, true)
-
-            for (frameIdx in 0 until totalFrames) {
-                val canvas: Canvas = inputSurface.lockCanvas(null)
-                canvas.drawColor(Color.BLACK)
-                canvas.drawBitmap(scaled, 0f, 0f, paint)
-                inputSurface.unlockCanvasAndPost(canvas)
-                drainEncoder(codec, muxer, bufferInfo, endOfStream = false, trackIndex, muxerStarted).also {
-                    trackIndex = it.first
-                    muxerStarted = it.second
+        for ((encW, encH) in candidateDimensions) {
+            var codec: MediaCodec? = null
+            var muxer: MediaMuxer? = null
+            try {
+                val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, encW, encH).apply {
+                    setInteger(
+                        MediaFormat.KEY_COLOR_FORMAT,
+                        MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface
+                    )
+                    setInteger(MediaFormat.KEY_BIT_RATE, (bitrateMbps * 1_000_000).coerceIn(2_000_000, 40_000_000))
+                    setInteger(MediaFormat.KEY_FRAME_RATE, fps)
+                    setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
                 }
-            }
-            scaled.recycle()
-            codec.signalEndOfInputStream()
-            drainEncoder(codec, muxer, bufferInfo, endOfStream = true, trackIndex, muxerStarted)
-        } catch (_: Exception) {
-            // Fallback: ensure non-empty file if hardware Surface encoder is unavailable on headless JVM
-            if (!outputFile.exists() || outputFile.length() == 0L) {
-                FileOutputStream(outputFile).use { fos ->
-                    poster.compress(Bitmap.CompressFormat.JPEG, 90, fos)
+                codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
+                codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+                val inputSurface = codec.createInputSurface()
+                codec.start()
+
+                muxer = MediaMuxer(outputFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+                val bufferInfo = MediaCodec.BufferInfo()
+                var trackIndex = -1
+                var muxerStarted = false
+
+                val totalFrames = (durationSec.coerceIn(1, 3) * 15).coerceIn(15, 45)
+                val paint = Paint(Paint.FILTER_BITMAP_FLAG)
+                val scaled = Bitmap.createScaledBitmap(poster, encW, encH, true)
+
+                for (frameIdx in 0 until totalFrames) {
+                    val canvas: Canvas = inputSurface.lockCanvas(null)
+                    canvas.drawColor(Color.BLACK)
+                    canvas.drawBitmap(scaled, 0f, 0f, paint)
+                    inputSurface.unlockCanvasAndPost(canvas)
+                    drainEncoder(codec, muxer, bufferInfo, endOfStream = false, trackIndex, muxerStarted).also {
+                        trackIndex = it.first
+                        muxerStarted = it.second
+                    }
                 }
+                scaled.recycle()
+                codec.signalEndOfInputStream()
+                drainEncoder(codec, muxer, bufferInfo, endOfStream = true, trackIndex, muxerStarted)
+                codec.stop()
+                codec.release()
+                codec = null
+                if (muxerStarted) {
+                    muxer.stop()
+                }
+                muxer.release()
+                muxer = null
+                if (outputFile.exists() && outputFile.length() > 0L) {
+                    return encW to encH
+                }
+            } catch (_: Exception) {
+                runCatching { codec?.stop() }
+                runCatching { codec?.release() }
+                runCatching { muxer?.stop() }
+                runCatching { muxer?.release() }
+                runCatching { outputFile.delete() }
             }
-        } finally {
-            runCatching { codec?.stop() }
-            runCatching { codec?.release() }
-            runCatching { muxer?.stop() }
-            runCatching { muxer?.release() }
         }
+
+        // Last resort fallback if no hardware H.264 surface encoder is present on JVM test runner
+        FileOutputStream(outputFile).use { fos ->
+            poster.compress(Bitmap.CompressFormat.JPEG, 92, fos)
+        }
+        return targetWidth to targetHeight
     }
 
     private fun drainEncoder(
