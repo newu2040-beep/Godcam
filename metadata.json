@@ -1,0 +1,9 @@
+{
+  "name": "GODCAM",
+  "description": "A premium, mobile-first camera and film-look app built around effortless capture, 100+ film presets, powerful Pro Photo & Pro Video manual controls, and honest high-quality export.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

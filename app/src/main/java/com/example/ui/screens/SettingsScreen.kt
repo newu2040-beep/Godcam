@@ -1,0 +1,465 @@
+package com.example.ui.screens
+
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.outlined.CameraAlt
+import androidx.compose.material.icons.outlined.Memory
+import androidx.compose.material.icons.outlined.Palette
+import androidx.compose.material.icons.outlined.PrivacyTip
+import androidx.compose.material.icons.outlined.Storage
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import com.example.data.UserPreferencesState
+import com.example.model.AppThemeOption
+import com.example.model.AspectRatioOption
+import com.example.model.GridMode
+import com.example.model.PhotoFormat
+import com.example.ui.AppDestination
+import com.example.ui.CameraUiState
+import com.example.ui.GodcamViewModel
+import com.example.ui.components.GodcamLensEmblem
+
+@Composable
+fun SettingsScreen(
+    uiState: CameraUiState,
+    preferences: UserPreferencesState,
+    viewModel: GodcamViewModel,
+    onRequestPermissions: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    BackHandler {
+        viewModel.navigateTo(AppDestination.CAMERA)
+    }
+
+    val caps = uiState.capabilities
+
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .statusBarsPadding()
+            .navigationBarsPadding()
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .widthIn(max = 640.dp)
+                .align(Alignment.TopCenter)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 18.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            // Header
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(
+                        onClick = { viewModel.navigateTo(AppDestination.CAMERA) },
+                        modifier = Modifier.testTag("settings_back_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
+                            contentDescription = "Back to Camera",
+                            tint = MaterialTheme.colorScheme.onBackground
+                        )
+                    }
+                    Text(
+                        text = "Settings & Studio",
+                        style = MaterialTheme.typography.headlineMedium.copy(
+                            color = MaterialTheme.colorScheme.onBackground,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    )
+                }
+
+                Surface(
+                    onClick = { viewModel.navigateTo(AppDestination.SPLASH_HERO) },
+                    shape = RoundedCornerShape(50),
+                    color = MaterialTheme.colorScheme.secondaryContainer,
+                    modifier = Modifier.testTag("settings_view_splash_button")
+                ) {
+                    Text(
+                        text = "Hero Cover",
+                        style = MaterialTheme.typography.labelLarge,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
+                    )
+                }
+            }
+
+            // 1. Themes & Personalization (PRD Section 12 — 8 Accessible Circular Swatches)
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = MaterialTheme.colorScheme.surface,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(20.dp))
+            ) {
+                Column(
+                    modifier = Modifier.padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Outlined.Palette,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column {
+                            Text("Themes & Personalization", style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                text = "Active: ${preferences.theme.title} — ${preferences.theme.direction}",
+                                style = MaterialTheme.typography.bodyMedium.copy(
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        AppThemeOption.entries.forEach { themeOpt ->
+                            val selected = preferences.theme == themeOpt
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .clickable { viewModel.selectTheme(themeOpt) }
+                                    .padding(vertical = 4.dp)
+                                    .testTag("theme_swatch_${themeOpt.id}")
+                            ) {
+                                Box(
+                                    contentAlignment = Alignment.Center,
+                                    modifier = Modifier
+                                        .size(48.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(themeOpt.bgHex))
+                                        .border(
+                                            width = if (selected) 3.dp else 1.5.dp,
+                                            color = if (selected) MaterialTheme.colorScheme.primary else Color(themeOpt.accentHex),
+                                            shape = CircleShape
+                                        )
+                                ) {
+                                    Box(
+                                        contentAlignment = Alignment.Center,
+                                        modifier = Modifier
+                                            .size(22.dp)
+                                            .clip(CircleShape)
+                                            .background(Color(themeOpt.accentHex))
+                                    ) {
+                                        if (selected) {
+                                            Icon(
+                                                imageVector = Icons.Filled.Check,
+                                                contentDescription = "Selected Theme",
+                                                tint = Color(themeOpt.primaryTextHex),
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = themeOpt.title,
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
+                                    )
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 2. Capture Defaults & Haptics
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = MaterialTheme.colorScheme.surface,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(20.dp))
+            ) {
+                Column(
+                    modifier = Modifier.padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Outlined.CameraAlt,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Default Capture Preferences", style = MaterialTheme.typography.titleMedium)
+                    }
+
+                    Text("Default Composition Grid", style = MaterialTheme.typography.labelLarge)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        GridMode.entries.forEach { grid ->
+                            FilterChip(
+                                selected = uiState.gridMode == grid,
+                                onClick = { viewModel.cycleGridMode() },
+                                label = { Text(grid.label) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = MaterialTheme.colorScheme.primary,
+                                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                                )
+                            )
+                        }
+                    }
+
+                    Text("Default Photo Format", style = MaterialTheme.typography.labelLarge)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        PhotoFormat.entries.forEach { fmt ->
+                            FilterChip(
+                                selected = uiState.photoFormat == fmt,
+                                onClick = { viewModel.setPhotoFormat(fmt) },
+                                label = { Text(fmt.label) }
+                            )
+                        }
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Tactile Shutter & Dial Haptics", style = MaterialTheme.typography.titleSmall)
+                            Text(
+                                text = "Subtle vibration feedback on shutter, mode switch, and lens stops",
+                                style = MaterialTheme.typography.bodyMedium.copy(
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            )
+                        }
+                        Switch(
+                            checked = preferences.hapticsEnabled,
+                            onCheckedChange = { viewModel.setHapticsEnabled(it) },
+                            modifier = Modifier.testTag("settings_haptics_switch")
+                        )
+                    }
+                }
+            }
+
+            // 3. Hardware Capability Matrix & Storage Inspector (PRD Section 3, 9, 14)
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = MaterialTheme.colorScheme.surface,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(20.dp))
+            ) {
+                Column(
+                    modifier = Modifier.padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Outlined.Memory,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Runtime Hardware Capability Matrix", style = MaterialTheme.typography.titleMedium)
+                    }
+                    Text(
+                        text = "GODCAM inspects Camera2 & MediaCodec hardware at runtime so only supported resolutions, FPS, and codecs are offered.",
+                        style = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    CapabilityStatRow("Available Storage", "${caps.availableStorageMb / 1024} GB (${caps.availableStorageMb} MB free)")
+                    CapabilityStatRow("Thermal State", caps.thermalStatusLabel)
+                    CapabilityStatRow("Supported Video Profiles", caps.supportedVideoResolutions.joinToString { it.shortLabel })
+                    CapabilityStatRow("Hardware Video Encoders", caps.supportedCodecs.joinToString { it.label })
+                    CapabilityStatRow("ISO Sensitivity Range", "ISO ${caps.isoRange.first} – ${caps.isoRange.last}")
+                    CapabilityStatRow("Exposure Compensation", "${caps.evRange.start} EV to +${caps.evRange.endInclusive} EV")
+                    CapabilityStatRow("8K Native Hardware Support", if (caps.supports8K) "Supported" else "Not supported (Max 4K native)")
+                }
+            }
+
+            // 4. Privacy & Contextual Permissions (PRD Section 15)
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = MaterialTheme.colorScheme.surface,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(20.dp))
+            ) {
+                Column(
+                    modifier = Modifier.padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Outlined.PrivacyTip,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Privacy & Contextual Permissions", style = MaterialTheme.typography.titleMedium)
+                    }
+                    Text(
+                        text = "• Offline-First: No account, cloud upload, or internet is required. All 108 film looks, camera controls, and Export Studio run 100% locally on your device.\n• Zero-Permission Imports: External photos use the Android Photo Picker without broad storage access.",
+                        style = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Include Geotag / Location Metadata", style = MaterialTheme.typography.titleSmall)
+                            Text(
+                                text = "Opt-in only; removable anytime in Export Studio",
+                                style = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            )
+                        }
+                        Switch(
+                            checked = preferences.preserveLocationMetadata,
+                            onCheckedChange = { viewModel.setPreserveLocation(it) }
+                        )
+                    }
+
+                    CapabilityStatRow(
+                        label = "Camera Permission",
+                        value = if (uiState.cameraPermissionGranted) "Granted" else "Tap Below to Grant"
+                    )
+                    CapabilityStatRow(
+                        label = "Microphone Permission",
+                        value = if (uiState.micPermissionGranted) "Granted" else "Tap Below to Grant"
+                    )
+                    CapabilityStatRow(
+                        label = "Notifications Permission",
+                        value = if (uiState.notificationsPermissionGranted) "Granted" else "Tap Below to Grant"
+                    )
+                    CapabilityStatRow(
+                        label = "Gallery Auto-Save (DCIM/GODCAM)",
+                        value = "Active (Photos & MP4 Videos)"
+                    )
+
+                    Surface(
+                        onClick = {
+                            onRequestPermissions()
+                            viewModel.setShowPermissionsDialog(true)
+                        },
+                        shape = RoundedCornerShape(50),
+                        color = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(46.dp)
+                            .testTag("settings_grant_all_permissions_button")
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(
+                                text = if (uiState.allCorePermissionsGranted) {
+                                    "Review Permissions & Gallery Auto-Save"
+                                } else {
+                                    "Allow All Permissions (Camera, Mic, Notifications & Gallery)"
+                                },
+                                style = MaterialTheme.typography.labelLarge
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Footer Brand Attribution
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 12.dp)
+            ) {
+                GodcamLensEmblem(size = 48.dp)
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "GODCAM • Version 1.0",
+                    style = MaterialTheme.typography.titleSmall
+                )
+                Text(
+                    text = "Capture More Than Moments.",
+                    style = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CapabilityStatRow(label: String, value: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 3.dp),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.labelMedium.copy(
+                color = MaterialTheme.colorScheme.onSurface,
+                fontWeight = FontWeight.SemiBold
+            )
+        )
+    }
+}

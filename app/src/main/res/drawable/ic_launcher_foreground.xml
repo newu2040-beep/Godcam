@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Outer soft sage circular housing (centered in 66dp safe zone: radius 31 around 54,54) -->
+    <path
+        android:fillColor="#FFDCE7E1"
+        android:pathData="M54,23 A31,31 0 1,1 53.99,23 Z" />
+    <!-- Subtle inner housing bevel -->
+    <path
+        android:fillColor="#FFC8D8D0"
+        android:pathData="M54,26 A28,28 0 1,1 53.99,26 Z" />
+    <!-- Mint-sage optical barrel ring -->
+    <path
+        android:fillColor="#FF6B9A86"
+        android:pathData="M54,33 A21,21 0 1,1 53.99,33 Z" />
+    <!-- Deep forest-charcoal multi-coated lens glass -->
+    <path
+        android:fillColor="#FF1D2F28"
+        android:pathData="M54,38 A16,16 0 1,1 53.99,38 Z" />
+    <!-- Inner core aperture -->
+    <path
+        android:fillColor="#FF111D18"
+        android:pathData="M54,44 A10,10 0 1,1 53.99,44 Z" />
+    <!-- Crisp optical specular highlight dot (top-left of glass) -->
+    <path
+        android:fillColor="#FFFCFBF7"
+        android:pathData="M48.5,44.5 A4.2,4.2 0 1,1 48.49,44.5 Z" />
+    <!-- Secondary subtle reflection arc dot -->
+    <path
+        android:fillColor="#668EB8A5"
+        android:pathData="M60.5,58.5 A2.2,2.2 0 1,1 60.49,58.5 Z" />
+    <!-- Warm amber tally/rangefinder indicator dot on top-right bezel -->
+    <path
+        android:fillColor="#FFD4AA56"
+        android:pathData="M71.5,34.5 A3.2,3.2 0 1,1 71.49,34.5 Z" />
+</vector>
