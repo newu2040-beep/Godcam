@@ -53,6 +53,7 @@ import androidx.compose.ui.unit.sp
 import com.example.data.UserPreferencesState
 import com.example.model.AppThemeOption
 import com.example.model.AspectRatioOption
+import com.example.model.ColorProfileOption
 import com.example.model.CompactLayoutMode
 import com.example.model.GridMode
 import com.example.model.ShutterSoundStyle
@@ -61,6 +62,7 @@ import com.example.ui.CameraUiState
 import com.example.ui.GodcamViewModel
 import com.example.ui.components.GodcamLensEmblem
 import com.example.ui.components.SegmentedPillSelector
+import com.example.ui.theme.GodcamAmberGold
 import com.example.ui.theme.JetBrainsMonoFamily
 import java.util.Locale
 
@@ -120,7 +122,7 @@ fun SettingsScreen(
                             )
                         )
                         Text(
-                            text = "DISPLAY • PASTEL THEMES • VERIFIED HARDWARE",
+                            text = "VERSION 5.0 • 26 THEMES • 100× ZOOM • LOG & MEGAPIXEL PRO",
                             style = MaterialTheme.typography.labelSmall.copy(
                                 fontFamily = JetBrainsMonoFamily,
                                 fontSize = 9.5.sp,
@@ -285,9 +287,48 @@ fun SettingsScreen(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "Camera & Viewfinder Controls",
+                            text = "Camera, Auto-Save & Viewfinder Controls",
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold)
                         )
+                    }
+
+                    // Automatic Photo & Video Saving Toggle (Can be turned ON or OFF anytime)
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(1.2.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.7f), RoundedCornerShape(14.dp))
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Auto-Save Photos & Videos to Gallery",
+                                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.ExtraBold)
+                                )
+                                Text(
+                                    text = if (uiState.autoSaveToGallery) {
+                                        "ON — Captures save automatically to DCIM/GODCAM & in-app Gallery"
+                                    } else {
+                                        "OFF — Review and confirm each photo or video before saving to Gallery"
+                                    },
+                                    style = MaterialTheme.typography.labelMedium.copy(
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                )
+                            }
+                            Switch(
+                                checked = uiState.autoSaveToGallery,
+                                onCheckedChange = { viewModel.setAutoSaveToGallery(it) },
+                                modifier = Modifier.testTag("settings_autosave_switch")
+                            )
+                        }
                     }
 
                     Text("Viewfinder Assist Overlays", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold))
@@ -468,6 +509,31 @@ fun SettingsScreen(
                         )
                     }
 
+                    val (mpW, mpH) = uiState.photoMegapixel.computeDimensions(uiState.aspectRatio)
+                    Text(
+                        text = "Sensor Megapixel Resolution (${uiState.photoMegapixel.label} • ${mpW}×${mpH} px)",
+                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        caps.supportedMegapixels.forEach { mp ->
+                            FilterChip(
+                                selected = uiState.photoMegapixel == mp,
+                                onClick = { viewModel.setPhotoMegapixel(mp) },
+                                label = { Text("${mp.label} (${mp.description})") },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = MaterialTheme.colorScheme.primary,
+                                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                                ),
+                                modifier = Modifier.testTag("settings_megapixel_${mp.name}")
+                            )
+                        }
+                    }
+
                     Text("Photo Capture Formats", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold))
                     Row(
                         modifier = Modifier
@@ -488,7 +554,31 @@ fun SettingsScreen(
                         }
                     }
 
-                    Text("Video Resolutions", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold))
+                    Text(
+                        text = "LOG & HDR Cinema Video Color Profile (${uiState.colorProfile.label})",
+                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        ColorProfileOption.entries.forEach { profile ->
+                            FilterChip(
+                                selected = uiState.colorProfile == profile,
+                                onClick = { viewModel.setColorProfile(profile) },
+                                label = { Text(profile.label) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = if (profile.isLog) GodcamAmberGold else MaterialTheme.colorScheme.primary,
+                                    selectedLabelColor = if (profile.isLog) Color(0xFF141E1A) else MaterialTheme.colorScheme.onPrimary
+                                ),
+                                modifier = Modifier.testTag("settings_color_profile_${profile.name}")
+                            )
+                        }
+                    }
+
+                    Text("Video Resolutions (Smooth 30fps & 60fps Engine)", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold))
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -675,8 +765,19 @@ fun SettingsScreen(
 
                     CapabilityStatRow("Active Sensor", "Lens #${caps.activeCameraId} (${caps.hardwareLevelLabel})")
                     CapabilityStatRow("Optics", "${caps.focalLengthMm}mm • f/${caps.apertureF}")
+                    CapabilityStatRow(
+                        label = "Sensor Megapixel Modes",
+                        value = caps.supportedMegapixels.joinToString(" · ") { it.shortBadge }
+                    )
                     CapabilityStatRow("Max Sensor Still Output", "${caps.maxPhotoWidth} × ${caps.maxPhotoHeight} px")
-                    CapabilityStatRow("Zoom Range", "${caps.minZoom}x – ${caps.maxZoom}x")
+                    CapabilityStatRow(
+                        label = "Zoom Range",
+                        value = "${caps.minZoom}x – ${caps.maxZoom.toInt()}x (Optical ${caps.hardwareOpticalMaxZoom}x + 100× Super-Res)"
+                    )
+                    CapabilityStatRow(
+                        label = "LOG & HDR Video Profiles",
+                        value = "Rec.709 · G-Log · D-Log M · S-Log3 · HLG"
+                    )
                     CapabilityStatRow(
                         label = "Stabilization",
                         value = if (caps.supportsOpticalStabilization) "Optical OIS + Digital EIS" else "Digital EIS"
@@ -775,7 +876,7 @@ fun SettingsScreen(
                         Box(contentAlignment = Alignment.Center) {
                             Text(
                                 text = if (uiState.allCorePermissionsGranted) {
-                                    "Permissions Granted • Auto-Save Active"
+                                    "Permissions Granted • Ready for Capture"
                                 } else {
                                     "Grant Camera, Mic & Gallery Permissions"
                                 },
@@ -786,19 +887,60 @@ fun SettingsScreen(
                 }
             }
 
-            // Footer Brand Attribution
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
+            // 6. VERSION 5.0 & DEVELOPER CREDIT CARD ("Made with love by Rahul Shah")
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = MaterialTheme.colorScheme.surface,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 8.dp)
+                    .border(1.8.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(20.dp))
+                    .testTag("settings_developer_credit_card")
             ) {
-                GodcamLensEmblem(size = 44.dp)
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "GODCAM • Version 1.0",
-                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.ExtraBold)
-                )
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 18.dp)
+                ) {
+                    GodcamLensEmblem(size = 46.dp)
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = "GODCAM • Version 5.0",
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.ExtraBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        ),
+                        modifier = Modifier.testTag("settings_version_text")
+                    )
+                    Text(
+                        text = "FINAL STABLE RELEASE • PRO OPTICAL & CINEMA ENGINE",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontFamily = JetBrainsMonoFamily,
+                            fontSize = 9.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            letterSpacing = 0.8.sp
+                        )
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Surface(
+                        shape = RoundedCornerShape(50),
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        modifier = Modifier
+                            .border(1.2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(50))
+                            .testTag("settings_developer_credit_badge")
+                    ) {
+                        Text(
+                            text = "Made with love by Rahul Shah",
+                            style = MaterialTheme.typography.labelLarge.copy(
+                                fontWeight = FontWeight.ExtraBold,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            ),
+                            modifier = Modifier.padding(horizontal = 18.dp, vertical = 8.dp)
+                        )
+                    }
+                }
             }
         }
     }

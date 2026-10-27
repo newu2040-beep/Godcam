@@ -246,6 +246,158 @@ private fun buildSchemeFor(option: AppThemeOption, systemDark: Boolean): ColorSc
             error = GodcamRecordRed
         )
 
+        AppThemeOption.PASTEL_CORAL -> lightColorScheme(
+            primary = PastelCoralActive,
+            onPrimary = Color.White,
+            primaryContainer = PastelCoralAccent,
+            onPrimaryContainer = PastelCoralText,
+            secondary = PastelCoralAccent,
+            onSecondary = PastelCoralText,
+            secondaryContainer = Color(0xFFFCDAD5),
+            onSecondaryContainer = PastelCoralText,
+            background = PastelCoralBg,
+            onBackground = PastelCoralText,
+            surface = PastelCoralSurface,
+            onSurface = PastelCoralText,
+            surfaceVariant = Color(0xFFFCDAD5),
+            onSurfaceVariant = Color(0xFF61312B),
+            outline = PastelCoralBorder,
+            error = GodcamRecordRed
+        )
+
+        AppThemeOption.PASTEL_MINT_GELATO -> lightColorScheme(
+            primary = PastelMintGelatoActive,
+            onPrimary = Color.White,
+            primaryContainer = PastelMintGelatoAccent,
+            onPrimaryContainer = PastelMintGelatoText,
+            secondary = PastelMintGelatoAccent,
+            onSecondary = PastelMintGelatoText,
+            secondaryContainer = Color(0xFFD0F2E4),
+            onSecondaryContainer = PastelMintGelatoText,
+            background = PastelMintGelatoBg,
+            onBackground = PastelMintGelatoText,
+            surface = PastelMintGelatoSurface,
+            onSurface = PastelMintGelatoText,
+            surfaceVariant = Color(0xFFD0F2E4),
+            onSurfaceVariant = Color(0xFF255442),
+            outline = PastelMintGelatoBorder,
+            error = GodcamRecordRed
+        )
+
+        AppThemeOption.PASTEL_ROSEWATER -> lightColorScheme(
+            primary = PastelRosewaterActive,
+            onPrimary = Color.White,
+            primaryContainer = PastelRosewaterAccent,
+            onPrimaryContainer = PastelRosewaterText,
+            secondary = PastelRosewaterAccent,
+            onSecondary = PastelRosewaterText,
+            secondaryContainer = Color(0xFFFAD7E0),
+            onSecondaryContainer = PastelRosewaterText,
+            background = PastelRosewaterBg,
+            onBackground = PastelRosewaterText,
+            surface = PastelRosewaterSurface,
+            onSurface = PastelRosewaterText,
+            surfaceVariant = Color(0xFFFAD7E0),
+            onSurfaceVariant = Color(0xFF5E303C),
+            outline = PastelRosewaterBorder,
+            error = GodcamRecordRed
+        )
+
+        AppThemeOption.PASTEL_HONEYDEW -> lightColorScheme(
+            primary = PastelHoneydewActive,
+            onPrimary = Color.White,
+            primaryContainer = PastelHoneydewAccent,
+            onPrimaryContainer = PastelHoneydewText,
+            secondary = PastelHoneydewAccent,
+            onSecondary = PastelHoneydewText,
+            secondaryContainer = Color(0xFFDDF2D3),
+            onSecondaryContainer = PastelHoneydewText,
+            background = PastelHoneydewBg,
+            onBackground = PastelHoneydewText,
+            surface = PastelHoneydewSurface,
+            onSurface = PastelHoneydewText,
+            surfaceVariant = Color(0xFFDDF2D3),
+            onSurfaceVariant = Color(0xFF39542B),
+            outline = PastelHoneydewBorder,
+            error = GodcamRecordRed
+        )
+
+        AppThemeOption.PASTEL_PERIWINKLE -> lightColorScheme(
+            primary = PastelPeriwinkleActive,
+            onPrimary = Color.White,
+            primaryContainer = PastelPeriwinkleAccent,
+            onPrimaryContainer = PastelPeriwinkleText,
+            secondary = PastelPeriwinkleAccent,
+            onSecondary = PastelPeriwinkleText,
+            secondaryContainer = Color(0xFFD8DFFA),
+            onSecondaryContainer = PastelPeriwinkleText,
+            background = PastelPeriwinkleBg,
+            onBackground = PastelPeriwinkleText,
+            surface = PastelPeriwinkleSurface,
+            onSurface = PastelPeriwinkleText,
+            surfaceVariant = Color(0xFFD8DFFA),
+            onSurfaceVariant = Color(0xFF333D66),
+            outline = PastelPeriwinkleBorder,
+            error = GodcamRecordRed
+        )
+
+        AppThemeOption.PASTEL_CHAMOMILE -> lightColorScheme(
+            primary = PastelChamomileActive,
+            onPrimary = Color.White,
+            primaryContainer = PastelChamomileAccent,
+            onPrimaryContainer = PastelChamomileText,
+            secondary = PastelChamomileAccent,
+            onSecondary = PastelChamomileText,
+            secondaryContainer = Color(0xFFF7ECC6),
+            onSecondaryContainer = PastelChamomileText,
+            background = PastelChamomileBg,
+            onBackground = PastelChamomileText,
+            surface = PastelChamomileSurface,
+            onSurface = PastelChamomileText,
+            surfaceVariant = Color(0xFFF7ECC6),
+            onSurfaceVariant = Color(0xFF594B1D),
+            outline = PastelChamomileBorder,
+            error = GodcamRecordRed
+        )
+
+        AppThemeOption.FUJI_SILVER -> lightColorScheme(
+            primary = FujiSilverActive,
+            onPrimary = Color.White,
+            primaryContainer = FujiSilverAccent,
+            onPrimaryContainer = Color.White,
+            secondary = FujiSilverAccent,
+            onSecondary = Color.White,
+            secondaryContainer = Color(0xFFDCDEDB),
+            onSecondaryContainer = FujiSilverText,
+            background = FujiSilverBg,
+            onBackground = FujiSilverText,
+            surface = FujiSilverSurface,
+            onSurface = FujiSilverText,
+            surfaceVariant = Color(0xFFDCDEDB),
+            onSurfaceVariant = Color(0xFF454B4F),
+            outline = FujiSilverBorder,
+            error = GodcamRecordRed
+        )
+
+        AppThemeOption.NORDIC_SNOW -> lightColorScheme(
+            primary = NordicSnowActive,
+            onPrimary = Color.White,
+            primaryContainer = NordicSnowAccent,
+            onPrimaryContainer = NordicSnowText,
+            secondary = NordicSnowAccent,
+            onSecondary = NordicSnowText,
+            secondaryContainer = Color(0xFFDCE6F0),
+            onSecondaryContainer = NordicSnowText,
+            background = NordicSnowBg,
+            onBackground = NordicSnowText,
+            surface = NordicSnowSurface,
+            onSurface = NordicSnowText,
+            surfaceVariant = Color(0xFFDCE6F0),
+            onSurfaceVariant = Color(0xFF395066),
+            outline = NordicSnowBorder,
+            error = GodcamRecordRed
+        )
+
         AppThemeOption.GRAPHITE -> darkColorScheme(
             primary = GraphiteAccent,
             onPrimary = Color(0xFF0E1D17),
@@ -281,6 +433,63 @@ private fun buildSchemeFor(option: AppThemeOption, systemDark: Boolean): ColorSc
             surfaceVariant = Color(0xFF1F2925),
             onSurfaceVariant = MidnightSubtleText,
             outline = MidnightBorder,
+            error = GodcamRecordRed
+        )
+
+        AppThemeOption.LEICA_BRASS -> darkColorScheme(
+            primary = LeicaBrassAccent,
+            onPrimary = Color(0xFF1F1705),
+            primaryContainer = LeicaBrassActive,
+            onPrimaryContainer = LeicaBrassText,
+            secondary = LeicaBrassAccent,
+            onSecondary = Color(0xFF1F1705),
+            secondaryContainer = Color(0xFF2B271F),
+            onSecondaryContainer = LeicaBrassText,
+            background = LeicaBrassBg,
+            onBackground = LeicaBrassText,
+            surface = LeicaBrassSurface,
+            onSurface = LeicaBrassText,
+            surfaceVariant = Color(0xFF2B271F),
+            onSurfaceVariant = LeicaBrassSubtle,
+            outline = LeicaBrassBorder,
+            error = GodcamRecordRed
+        )
+
+        AppThemeOption.TOKYO_NEON -> darkColorScheme(
+            primary = TokyoNeonAccent,
+            onPrimary = Color(0xFF051F17),
+            primaryContainer = TokyoNeonActive,
+            onPrimaryContainer = TokyoNeonText,
+            secondary = TokyoNeonAccent,
+            onSecondary = Color(0xFF051F17),
+            secondaryContainer = Color(0xFF1E2742),
+            onSecondaryContainer = TokyoNeonText,
+            background = TokyoNeonBg,
+            onBackground = TokyoNeonText,
+            surface = TokyoNeonSurface,
+            onSurface = TokyoNeonText,
+            surfaceVariant = Color(0xFF1E2742),
+            onSurfaceVariant = TokyoNeonSubtle,
+            outline = TokyoNeonBorder,
+            error = GodcamRecordRed
+        )
+
+        AppThemeOption.ESPRESSO_CLUB -> darkColorScheme(
+            primary = EspressoClubAccent,
+            onPrimary = Color(0xFF241409),
+            primaryContainer = EspressoClubActive,
+            onPrimaryContainer = EspressoClubText,
+            secondary = EspressoClubAccent,
+            onSecondary = Color(0xFF241409),
+            secondaryContainer = Color(0xFF332721),
+            onSecondaryContainer = EspressoClubText,
+            background = EspressoClubBg,
+            onBackground = EspressoClubText,
+            surface = EspressoClubSurface,
+            onSurface = EspressoClubText,
+            surfaceVariant = Color(0xFF332721),
+            onSurfaceVariant = EspressoClubSubtle,
+            outline = EspressoClubBorder,
             error = GodcamRecordRed
         )
     }

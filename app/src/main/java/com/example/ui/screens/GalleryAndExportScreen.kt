@@ -91,6 +91,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -98,6 +99,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -1268,8 +1270,8 @@ private fun FullScreenMediaViewer(
         }
     }
 
-    // Load persisted high-resolution filtered motion frames off the main thread so playback never lags
-    val filteredVideoFrames by produceState(
+    // Load persisted high-resolution filtered motion frames off the main thread and pre-convert to ImageBitmap so 30/60fps playback never lags
+    val filteredVideoFrames by produceState<List<ImageBitmap>>(
         initialValue = emptyList(),
         key1 = item.id,
         key2 = item.filePath,
@@ -1277,24 +1279,36 @@ private fun FullScreenMediaViewer(
     ) {
         value = if (item.isVideo) {
             withContext(Dispatchers.IO) {
-                MediaGallerySaver.loadVideoFilteredFrames(item.filePath)
+                MediaGallerySaver.loadVideoFilteredFrames(item.filePath).map { it.asImageBitmap() }
             }
         } else {
             emptyList()
         }
     }
 
-    LaunchedEffect(isPlayingVideo, videoViewRef, filteredVideoFrames.size) {
+    // VSYNC-locked 60Hz delta-time playback loop so 1080p 30fps & 60fps videos play smoothly without jitter
+    LaunchedEffect(isPlayingVideo, videoViewRef, filteredVideoFrames.size, totalVideoSec) {
+        var lastFrameNanos = 0L
         while (isPlayingVideo) {
-            delay(85)
-            if (filteredVideoFrames.isNotEmpty()) {
-                videoProgressSec = if (videoProgressSec + 0.085f >= totalVideoSec) 0f else videoProgressSec + 0.085f
-            } else {
-                val vv = videoViewRef
-                if (vv != null && runCatching { vv.isPlaying }.getOrDefault(false)) {
-                    videoProgressSec = (vv.currentPosition / 1000f).coerceIn(0f, totalVideoSec)
+            withFrameNanos { nowNanos ->
+                val dtSec = if (lastFrameNanos == 0L) {
+                    0.016f
                 } else {
-                    videoProgressSec = if (videoProgressSec + 0.085f >= totalVideoSec) 0f else videoProgressSec + 0.085f
+                    ((nowNanos - lastFrameNanos) / 1_000_000_000f).coerceIn(0.004f, 0.08f)
+                }
+                lastFrameNanos = nowNanos
+
+                if (filteredVideoFrames.isNotEmpty()) {
+                    val next = videoProgressSec + dtSec
+                    videoProgressSec = if (next >= totalVideoSec) 0f else next
+                } else {
+                    val vv = videoViewRef
+                    if (vv != null && runCatching { vv.isPlaying }.getOrDefault(false)) {
+                        videoProgressSec = (vv.currentPosition / 1000f).coerceIn(0f, totalVideoSec)
+                    } else {
+                        val next = videoProgressSec + dtSec
+                        videoProgressSec = if (next >= totalVideoSec) 0f else next
+                    }
                 }
             }
         }
@@ -1430,7 +1444,7 @@ private fun FullScreenMediaViewer(
                         .padding(horizontal = 8.dp, vertical = 8.dp)
                 ) {
                     Image(
-                        bitmap = activeVideoFrame.asImageBitmap(),
+                        bitmap = activeVideoFrame,
                         contentDescription = item.title,
                         contentScale = ContentScale.Fit,
                         colorFilter = compareFilter,

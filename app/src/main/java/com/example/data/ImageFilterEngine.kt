@@ -3,10 +3,12 @@ package com.example.data
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.BitmapShader
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.ColorMatrixColorFilter
 import android.graphics.LinearGradient
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.RadialGradient
 import android.graphics.RectF
@@ -15,19 +17,52 @@ import android.media.MediaMetadataRetriever
 import android.net.Uri
 import androidx.compose.ui.graphics.ColorMatrix
 import com.example.model.AspectRatioOption
+import com.example.model.ColorProfileOption
 import com.example.model.EditRecipe
 import com.example.model.FilterPreset
 import com.example.model.MediaItemModel
+import com.example.model.ProOpticalState
+import com.example.model.WhiteBalancePreset
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import kotlin.math.abs
-import kotlin.math.exp
+import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.roundToInt
 import kotlin.random.Random
 
 object ImageFilterEngine {
+
+    /**
+     * Pre-computed 160x160 organic film grain tile shader.
+     * Replaces per-frame 10,000-rect loops with a single GPU/Canvas shader draw call,
+     * eliminating frame drops during 1080p 30fps/60fps video recording and live filtering.
+     */
+    private val cachedGrainShader: BitmapShader by lazy {
+        val tileSize = 160
+        val bmp = Bitmap.createBitmap(tileSize, tileSize, Bitmap.Config.ARGB_8888)
+        val pixels = IntArray(tileSize * tileSize)
+        val rng = Random(42)
+        for (i in pixels.indices) {
+            val roll = rng.nextInt(100)
+            pixels[i] = when {
+                roll < 22 -> {
+                    val a = rng.nextInt(28, 120)
+                    Color.argb(a, 250, 246, 238)
+                }
+                roll < 44 -> {
+                    val a = rng.nextInt(28, 120)
+                    Color.argb(a, 16, 22, 20)
+                }
+                else -> Color.TRANSPARENT
+            }
+        }
+        bmp.setPixels(pixels, 0, tileSize, 0, 0, tileSize, tileSize)
+        BitmapShader(bmp, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT)
+    }
+
+    private val grainShaderMatrix = Matrix()
 
     /**
      * Loads the actual saved photo or video frame from [MediaItemModel.filePath] or [MediaItemModel.uriString].
@@ -89,15 +124,15 @@ object ImageFilterEngine {
     }
 
     /**
-     * Builds a 4x5 Jetpack Compose [ColorMatrix] from a [FilterPreset] and [EditRecipe]
-     * scaled by [EditRecipe.intensity] (0f..1f).
+     * Builds a 4x5 Jetpack Compose [ColorMatrix] from a [FilterPreset], [EditRecipe], and [ProOpticalState].
      */
     fun buildComposeColorMatrix(
         preset: FilterPreset,
         recipe: EditRecipe = EditRecipe(presetId = preset.id),
-        extraEv: Float = 0f
+        extraEv: Float = 0f,
+        proOptical: ProOpticalState = ProOpticalState()
     ): ColorMatrix {
-        return ColorMatrix(buildFloatMatrix(preset, recipe, extraEv))
+        return ColorMatrix(buildFloatMatrix(preset, recipe, extraEv, proOptical))
     }
 
     /**
@@ -106,45 +141,113 @@ object ImageFilterEngine {
     fun buildAndroidColorMatrix(
         preset: FilterPreset,
         recipe: EditRecipe = EditRecipe(presetId = preset.id),
-        extraEv: Float = 0f
+        extraEv: Float = 0f,
+        proOptical: ProOpticalState = ProOpticalState()
     ): android.graphics.ColorMatrix {
-        return android.graphics.ColorMatrix(buildFloatMatrix(preset, recipe, extraEv))
+        return android.graphics.ColorMatrix(buildFloatMatrix(preset, recipe, extraEv, proOptical))
     }
 
     /**
      * Builds a 20-float array for Android's [android.graphics.ColorMatrix] and Compose's [ColorMatrix].
+     * Incorporates filter preset, fine-tune recipe, manual ISO/Shutter/EV response, White Balance Kelvin,
+     * and LOG video profiles (G-Log, D-Log M, S-Log3, HLG HDR) for instant live viewfinder preview.
      */
     fun buildFloatMatrix(
         preset: FilterPreset,
         recipe: EditRecipe = EditRecipe(presetId = preset.id),
-        extraEv: Float = 0f
+        extraEv: Float = 0f,
+        proOptical: ProOpticalState = ProOpticalState()
     ): FloatArray {
         val t = if (preset.id == "original") 0f else recipe.intensity.coerceIn(0f, 1f)
         val combinedMatrix = android.graphics.ColorMatrix()
 
-        // 1. Saturation
-        val sat = lerp(1f, preset.saturation, t).coerceIn(0f, 2.2f)
+        // 1. Profile saturation & LOG curve characteristics
+        val profileSatMultiplier = when (proOptical.colorProfile) {
+            ColorProfileOption.STANDARD -> 1.0f
+            ColorProfileOption.FLAT_NATURAL -> 0.72f
+            ColorProfileOption.CINE_D_LOG -> 0.65f
+            ColorProfileOption.S_LOG3 -> 0.58f
+            ColorProfileOption.HLG_HDR -> 1.14f
+        }
+        val sat = (lerp(1f, preset.saturation, t) * profileSatMultiplier).coerceIn(0f, 2.2f)
         val satMatrix = android.graphics.ColorMatrix().apply {
             setSaturation(sat)
         }
         combinedMatrix.postConcat(satMatrix)
 
-        // 2. RGB Channel Gain + Warmth + Tint + Contrast + Fade + EV
-        val rGain = lerp(1f, preset.rScale, t) + (recipe.warmthOffset * 0.22f)
-        val gGain = lerp(1f, preset.gScale, t) - (preset.tint * t * 0.12f)
-        val bGain = lerp(1f, preset.bScale, t) - (recipe.warmthOffset * 0.22f)
+        // 2. White Balance Preset & Manual Kelvin (2500K..9500K) shift
+        val wbWarmthShift = when (proOptical.whiteBalance) {
+            WhiteBalancePreset.AUTO -> 0f
+            WhiteBalancePreset.DAYLIGHT -> 0.04f
+            WhiteBalancePreset.CLOUDY -> 0.18f
+            WhiteBalancePreset.SHADE -> 0.28f
+            WhiteBalancePreset.TUNGSTEN -> -0.28f
+            WhiteBalancePreset.FLUORESCENT -> -0.14f
+            WhiteBalancePreset.MANUAL_KELVIN -> ((proOptical.manualKelvin - 5500f) / 3800f).coerceIn(-0.8f, 0.9f)
+        }
+        val wbTintShift = if (proOptical.whiteBalance == WhiteBalancePreset.FLUORESCENT) 0.10f else 0f
 
-        val contrast = (lerp(1f, preset.contrast, t) + recipe.contrastOffset).coerceIn(0.55f, 1.85f)
-        val warmth = (preset.warmth * t) + recipe.warmthOffset
-        val fade = ((preset.fade * t) + recipe.fadeOffset).coerceIn(0f, 0.45f)
-        val evOffset = extraEv * 22f
+        // 3. Manual ISO + Manual Shutter Speed optical exposure response
+        val isoEvShift = if (!proOptical.isAutoIso) {
+            val ratio = (proOptical.manualIso.coerceIn(50, 12800).toFloat() / 400f)
+            (ln(ratio) / ln(2f)) * 0.42f
+        } else 0f
+
+        val shutterEvShift = if (!proOptical.isAutoShutter) {
+            val ratio = (125f / proOptical.shutterDenominator.coerceIn(2, 8000).toFloat())
+            (ln(ratio) / ln(2f)) * 0.40f
+        } else 0f
+
+        val totalEv = (extraEv + proOptical.exposureEv + isoEvShift + shutterEvShift).coerceIn(-3.5f, 3.5f)
+
+        // 4. LOG Profile dynamic range compression (shadow lift + highlight roll-off)
+        val profileContrastMul: Float
+        val profileFadeLift: Float
+        val profileHighlightScale: Float
+        when (proOptical.colorProfile) {
+            ColorProfileOption.STANDARD -> {
+                profileContrastMul = 1.0f
+                profileFadeLift = 0.0f
+                profileHighlightScale = 1.0f
+            }
+            ColorProfileOption.FLAT_NATURAL -> {
+                profileContrastMul = 0.78f
+                profileFadeLift = 0.14f
+                profileHighlightScale = 0.93f
+            }
+            ColorProfileOption.CINE_D_LOG -> {
+                profileContrastMul = 0.72f
+                profileFadeLift = 0.18f
+                profileHighlightScale = 0.90f
+            }
+            ColorProfileOption.S_LOG3 -> {
+                profileContrastMul = 0.66f
+                profileFadeLift = 0.22f
+                profileHighlightScale = 0.87f
+            }
+            ColorProfileOption.HLG_HDR -> {
+                profileContrastMul = 1.08f
+                profileFadeLift = 0.02f
+                profileHighlightScale = 1.03f
+            }
+        }
+
+        // 5. RGB Channel Gain + Warmth + Tint + Contrast + Fade + EV
+        val totalWarmth = (preset.warmth * t) + recipe.warmthOffset + wbWarmthShift
+        val rGain = (lerp(1f, preset.rScale, t) + (totalWarmth * 0.18f)) * profileHighlightScale
+        val gGain = (lerp(1f, preset.gScale, t) - (preset.tint * t * 0.12f) + (wbTintShift * 0.08f)) * profileHighlightScale
+        val bGain = (lerp(1f, preset.bScale, t) - (totalWarmth * 0.18f)) * profileHighlightScale
+
+        val contrast = ((lerp(1f, preset.contrast, t) + recipe.contrastOffset) * profileContrastMul).coerceIn(0.48f, 1.85f)
+        val fade = ((preset.fade * t) + recipe.fadeOffset + profileFadeLift).coerceIn(0f, 0.52f)
+        val evOffset = totalEv * 22f
 
         val cScale = contrast * (1f - fade * 0.32f)
-        val cOffset = 128f * (1f - cScale) + (fade * 46f) + evOffset
+        val cOffset = 128f * (1f - cScale) + (fade * 48f) + evOffset
 
-        val warmR = warmth * 24f
-        val warmG = warmth * 6f
-        val warmB = -warmth * 26f
+        val warmR = totalWarmth * 22f
+        val warmG = totalWarmth * 5f
+        val warmB = -totalWarmth * 24f
 
         val gradeArray = floatArrayOf(
             rGain * cScale, 0f, 0f, 0f, cOffset + warmR,
@@ -163,7 +266,8 @@ object ImageFilterEngine {
 
     /**
      * Renders a filtered, cropped, and optionally resized [Bitmap] off the main thread.
-     * Bakes the ColorMatrix, optical vignette, and analog film grain directly into the output pixels.
+     * Bakes the ColorMatrix, ProOpticalState (ISO/Shutter/Kelvin/LOG), optical vignette,
+     * analog film grain, and hybrid zoom up to 100x directly into the output pixels.
      */
     suspend fun renderFilteredBitmap(
         source: Bitmap,
@@ -172,8 +276,37 @@ object ImageFilterEngine {
         targetWidth: Int? = null,
         targetHeight: Int? = null,
         applyCrop: Boolean = false,
-        extraEv: Float = 0f
+        extraEv: Float = 0f,
+        proOptical: ProOpticalState = ProOpticalState(),
+        extraDigitalZoom: Float = 1.0f
     ): Bitmap = withContext(Dispatchers.Default) {
+        renderFilteredBitmapSync(
+            source = source,
+            preset = preset,
+            recipe = recipe,
+            targetWidth = targetWidth,
+            targetHeight = targetHeight,
+            applyCrop = applyCrop,
+            extraEv = extraEv,
+            proOptical = proOptical,
+            extraDigitalZoom = extraDigitalZoom
+        )
+    }
+
+    /**
+     * Synchronous high-speed bitmap renderer for background video frame processing and photo pipelines.
+     */
+    fun renderFilteredBitmapSync(
+        source: Bitmap,
+        preset: FilterPreset,
+        recipe: EditRecipe,
+        targetWidth: Int? = null,
+        targetHeight: Int? = null,
+        applyCrop: Boolean = false,
+        extraEv: Float = 0f,
+        proOptical: ProOpticalState = ProOpticalState(),
+        extraDigitalZoom: Float = 1.0f
+    ): Bitmap {
         val cropped = if (applyCrop) {
             cropToAspectRatio(source, recipe.aspectRatio)
         } else {
@@ -187,12 +320,12 @@ object ImageFilterEngine {
         val canvas = Canvas(output)
 
         val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
-        paint.colorFilter = ColorMatrixColorFilter(buildAndroidColorMatrix(preset, recipe, extraEv))
+        paint.colorFilter = ColorMatrixColorFilter(buildAndroidColorMatrix(preset, recipe, extraEv, proOptical))
 
-        // Always center-crop source rect to match finalW:finalH so output never stretches
+        // Always center-crop source rect to match finalW:finalH AND apply extraDigitalZoom (up to 100x)
         val srcRatio = cropped.width.toFloat() / cropped.height.coerceAtLeast(1).toFloat()
         val dstRatio = finalW.toFloat() / finalH.coerceAtLeast(1).toFloat()
-        val srcRect = if (abs(srcRatio - dstRatio) > 0.015f) {
+        val baseRect = if (abs(srcRatio - dstRatio) > 0.015f) {
             if (srcRatio > dstRatio) {
                 val cropW = (cropped.height * dstRatio).roundToInt().coerceIn(1, cropped.width)
                 val left = ((cropped.width - cropW) / 2).coerceAtLeast(0)
@@ -203,8 +336,22 @@ object ImageFilterEngine {
                 android.graphics.Rect(0, top, cropped.width, top + cropH)
             }
         } else {
-            null
+            android.graphics.Rect(0, 0, cropped.width, cropped.height)
         }
+
+        val zoomFactor = extraDigitalZoom.coerceIn(1.0f, 100.0f)
+        val srcRect = if (zoomFactor > 1.01f) {
+            val zoomedW = (baseRect.width() / zoomFactor).roundToInt().coerceAtLeast(8)
+            val zoomedH = (baseRect.height() / zoomFactor).roundToInt().coerceAtLeast(8)
+            val cx = baseRect.centerX()
+            val cy = baseRect.centerY()
+            val left = (cx - zoomedW / 2).coerceIn(0, (cropped.width - zoomedW).coerceAtLeast(0))
+            val top = (cy - zoomedH / 2).coerceIn(0, (cropped.height - zoomedH).coerceAtLeast(0))
+            android.graphics.Rect(left, top, left + zoomedW, top + zoomedH)
+        } else {
+            baseRect
+        }
+
         val dstRect = RectF(0f, 0f, finalW.toFloat(), finalH.toFloat())
         canvas.drawBitmap(cropped, srcRect, dstRect, paint)
 
@@ -230,8 +377,11 @@ object ImageFilterEngine {
             canvas.drawRect(dstRect, vigPaint)
         }
 
-        // Apply organic film grain if active
-        val totalGrain = ((preset.grain * t) + recipe.grainOffset).coerceIn(0f, 0.6f)
+        // Apply organic film grain via cached BitmapShader tile (single draw call)
+        val isoGrainBoost = if (!proOptical.isAutoIso && proOptical.manualIso > 1600) {
+            ((proOptical.manualIso - 1600f) / 16000f).coerceIn(0f, 0.18f)
+        } else 0f
+        val totalGrain = ((preset.grain * t) + recipe.grainOffset + isoGrainBoost).coerceIn(0f, 0.65f)
         if (totalGrain > 0.02f) {
             drawOrganicGrain(canvas, finalW, finalH, totalGrain)
         }
@@ -239,7 +389,7 @@ object ImageFilterEngine {
         if (cropped !== source) {
             cropped.recycle()
         }
-        output
+        return output
     }
 
     private fun cropToAspectRatio(source: Bitmap, ratio: AspectRatioOption): Bitmap {
@@ -265,23 +415,15 @@ object ImageFilterEngine {
     }
 
     private fun drawOrganicGrain(canvas: Canvas, width: Int, height: Int, grainStrength: Float) {
-        val grainPaint = Paint()
-        val rng = Random(42)
-        val dotCount = ((width * height) / 130).coerceIn(600, 10000)
-        val maxAlpha = (grainStrength * 82f).roundToInt().coerceIn(8, 72)
-        for (i in 0 until dotCount) {
-            val gx = rng.nextFloat() * width
-            val gy = rng.nextFloat() * height
-            val isLight = rng.nextBoolean()
-            val alpha = rng.nextInt(4, maxAlpha + 1)
-            grainPaint.color = if (isLight) {
-                Color.argb(alpha, 250, 246, 238)
-            } else {
-                Color.argb(alpha, 18, 24, 22)
-            }
-            val size = if (width > 1000) 2.2f else 1.4f
-            canvas.drawRect(gx, gy, gx + size, gy + size, grainPaint)
+        val scale = if (width > 1200) 1.6f else 1.0f
+        grainShaderMatrix.reset()
+        grainShaderMatrix.setScale(scale, scale)
+        cachedGrainShader.setLocalMatrix(grainShaderMatrix)
+        val grainPaint = Paint(Paint.FILTER_BITMAP_FLAG).apply {
+            shader = cachedGrainShader
+            alpha = (grainStrength * 145f).roundToInt().coerceIn(10, 115)
         }
+        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), grainPaint)
     }
 
     /**

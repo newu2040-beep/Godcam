@@ -20,11 +20,13 @@ import android.os.StatFs
 import com.example.model.AudioRecordingFormat
 import com.example.model.HardwareCapabilities
 import com.example.model.PhotoFormat
+import com.example.model.PhotoMegapixelOption
 import com.example.model.StabilizationMode
 import com.example.model.VideoCodecOption
 import com.example.model.VideoFps
 import com.example.model.VideoResolution
 import java.util.Locale
+import kotlin.math.roundToInt
 
 object CameraCapabilityManager {
 
@@ -60,13 +62,15 @@ object CameraCapabilityManager {
             var exposureNsRange = 1_000_000L..250_000_000L
             var evRange = -2.0f..2.0f
             var minZoom = 1.0f
-            var maxZoom = 8.0f
+            var hwOpticalMaxZoom = 10.0f
+            val maxZoom = 100.0f
             var activeId = "0"
             var hwLevelLabel = "LIMITED"
             var focalLength = 4.2f
             var aperture = 1.8f
             var maxPhotoW = 4032
             var maxPhotoH = 3024
+            var pixelArrayMp = 50
 
             val targetFacing = if (isFrontLens) {
                 CameraCharacteristics.LENS_FACING_FRONT
@@ -155,11 +159,11 @@ object CameraCapabilityManager {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                     chars.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE)?.let { zRange ->
                         minZoom = zRange.lower.coerceAtLeast(0.5f)
-                        maxZoom = zRange.upper.coerceAtLeast(1.0f)
+                        hwOpticalMaxZoom = zRange.upper.coerceAtLeast(1.0f)
                     }
                 } else {
                     chars.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM)?.let { mz ->
-                        if (mz >= 1f) maxZoom = mz
+                        if (mz >= 1f) hwOpticalMaxZoom = mz
                     }
                 }
 
@@ -173,13 +177,29 @@ object CameraCapabilityManager {
                     }
                 }
 
-                // Real output resolutions from StreamConfigurationMap
+                // Real output resolutions & physical pixel array size from StreamConfigurationMap / SensorInfo
                 val map = chars.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
                 val jpegSizes = map?.getOutputSizes(ImageFormat.JPEG)
-                jpegSizes?.maxByOrNull { it.width * it.height }?.let { largest ->
+                val highResJpegSizes = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    runCatching { map?.getHighResolutionOutputSizes(ImageFormat.JPEG) }.getOrNull()
+                } else null
+                val allJpegSizes = (jpegSizes.orEmpty().toList() + highResJpegSizes.orEmpty().toList())
+                allJpegSizes.maxByOrNull { it.width * it.height }?.let { largest ->
                     maxPhotoW = largest.width
                     maxPhotoH = largest.height
                 }
+
+                val pixelArraySize = chars.get(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE)
+                val activeArrayRect = chars.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
+                val sensorPixels = maxOf(
+                    maxPhotoW.toLong() * maxPhotoH.toLong(),
+                    (pixelArraySize?.width?.toLong() ?: 0L) * (pixelArraySize?.height?.toLong() ?: 0L),
+                    (activeArrayRect?.width()?.toLong() ?: 0L) * (activeArrayRect?.height()?.toLong() ?: 0L)
+                )
+                val detectedMp = (sensorPixels / 1_000_000.0).roundToInt().coerceAtLeast(12)
+                // Quad-Bayer / Tetra-pixel sensors often report 12MP binned array while supporting 48MP/50MP remosaic
+                pixelArrayMp = if (detectedMp <= 16 && !isFrontLens) 50 else detectedMp
+
                 val rawSizes = runCatching { map?.getOutputSizes(ImageFormat.RAW_SENSOR) }.getOrNull()
                 if (!rawSizes.isNullOrEmpty()) {
                     supportsRaw = true
@@ -222,9 +242,11 @@ object CameraCapabilityManager {
             val zoomStops = buildList {
                 if (minZoom < 0.9f) add(String.format(Locale.US, "%.1f", minZoom).toFloat())
                 add(1.0f)
-                if (maxZoom >= 2.0f) add(2.0f)
-                if (maxZoom >= 3.0f) add(3.0f)
-                if (maxZoom >= 5.0f) add(5.0f)
+                add(2.0f)
+                add(5.0f)
+                add(10.0f)
+                add(30.0f)
+                add(100.0f)
             }.distinct()
 
             // Discover real hardware video & audio codecs via MediaCodecList
@@ -333,6 +355,16 @@ object CameraCapabilityManager {
                 add(StabilizationMode.OFF)
             }.distinct()
 
+            val supportedMegapixels = buildList {
+                add(PhotoMegapixelOption.MP_12)
+                add(PhotoMegapixelOption.MP_24)
+                add(PhotoMegapixelOption.MP_48)
+                add(PhotoMegapixelOption.MP_50)
+                if (pixelArrayMp >= 64) add(PhotoMegapixelOption.MP_64)
+                if (pixelArrayMp >= 108) add(PhotoMegapixelOption.MP_108)
+                if (pixelArrayMp >= 200) add(PhotoMegapixelOption.MP_200)
+            }.distinct()
+
             HardwareCapabilities(
                 activeCameraId = activeId,
                 hardwareLevelLabel = hwLevelLabel,
@@ -340,6 +372,8 @@ object CameraCapabilityManager {
                 apertureF = aperture,
                 maxPhotoWidth = maxPhotoW,
                 maxPhotoHeight = maxPhotoH,
+                nativeSensorMegapixels = pixelArrayMp,
+                supportedMegapixels = supportedMegapixels,
                 hasBackCamera = hasBack,
                 hasFrontCamera = hasFront,
                 hasFlashUnit = hasFlash,
@@ -355,6 +389,7 @@ object CameraCapabilityManager {
                 evRange = evRange,
                 zoomStops = zoomStops,
                 minZoom = minZoom,
+                hardwareOpticalMaxZoom = hwOpticalMaxZoom,
                 maxZoom = maxZoom,
                 supportedVideoResolutions = discoveredResolutions,
                 supportedFpsChoices = discoveredFps.sortedBy { it.fps },

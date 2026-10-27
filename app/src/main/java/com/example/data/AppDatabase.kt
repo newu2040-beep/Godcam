@@ -21,6 +21,7 @@ import com.example.model.CompactLayoutMode
 import com.example.model.GridMode
 import com.example.model.MediaItemModel
 import com.example.model.PhotoFormat
+import com.example.model.PhotoMegapixelOption
 import com.example.model.ShutterSoundStyle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -138,8 +139,10 @@ data class UserPreferencesState(
     val defaultGrid: GridMode = GridMode.THREE_BY_THREE,
     val defaultRatio: AspectRatioOption = AspectRatioOption.RATIO_4_3,
     val defaultPhotoFormat: PhotoFormat = PhotoFormat.JPEG,
+    val defaultMegapixel: PhotoMegapixelOption = PhotoMegapixelOption.MP_50,
     val shutterSoundStyle: ShutterSoundStyle = ShutterSoundStyle.FUJI_MECHANICAL,
     val audioRecordingFormat: AudioRecordingFormat = AudioRecordingFormat.AAC_LC_STEREO_48K,
+    val autoSaveToGallery: Boolean = true,
     val hapticsEnabled: Boolean = true,
     val preserveLocationMetadata: Boolean = false
 )
@@ -154,8 +157,10 @@ class GodcamRepository(
         val GRID = stringPreferencesKey("grid_mode")
         val RATIO = stringPreferencesKey("default_ratio")
         val FORMAT = stringPreferencesKey("default_photo_format")
+        val MEGAPIXEL = stringPreferencesKey("default_megapixel")
         val SHUTTER_SOUND = stringPreferencesKey("shutter_sound_style")
         val AUDIO_FORMAT = stringPreferencesKey("audio_recording_format")
+        val AUTO_SAVE = booleanPreferencesKey("auto_save_to_gallery")
         val HAPTICS = booleanPreferencesKey("haptics_enabled")
         val LOCATION_META = booleanPreferencesKey("preserve_location_meta")
     }
@@ -179,6 +184,8 @@ class GodcamRepository(
         val ratio = AspectRatioOption.entries.firstOrNull { it.name == ratioName } ?: AspectRatioOption.RATIO_4_3
         val formatName = prefs[Keys.FORMAT] ?: PhotoFormat.JPEG.name
         val format = PhotoFormat.entries.firstOrNull { it.name == formatName } ?: PhotoFormat.JPEG
+        val mpName = prefs[Keys.MEGAPIXEL] ?: PhotoMegapixelOption.MP_50.name
+        val megapixel = PhotoMegapixelOption.entries.firstOrNull { it.name == mpName } ?: PhotoMegapixelOption.MP_50
         val shutterName = prefs[Keys.SHUTTER_SOUND] ?: ShutterSoundStyle.FUJI_MECHANICAL.name
         val shutterStyle = ShutterSoundStyle.entries.firstOrNull { it.name == shutterName } ?: ShutterSoundStyle.FUJI_MECHANICAL
         val audioName = prefs[Keys.AUDIO_FORMAT] ?: AudioRecordingFormat.AAC_LC_STEREO_48K.name
@@ -189,8 +196,10 @@ class GodcamRepository(
             defaultGrid = grid,
             defaultRatio = ratio,
             defaultPhotoFormat = format,
+            defaultMegapixel = megapixel,
             shutterSoundStyle = shutterStyle,
             audioRecordingFormat = audioFmt,
+            autoSaveToGallery = prefs[Keys.AUTO_SAVE] ?: true,
             hapticsEnabled = prefs[Keys.HAPTICS] ?: true,
             preserveLocationMetadata = prefs[Keys.LOCATION_META] ?: false
         )
@@ -216,12 +225,20 @@ class GodcamRepository(
         context.dataStore.edit { it[Keys.FORMAT] = format.name }
     }
 
+    suspend fun setDefaultMegapixel(megapixel: PhotoMegapixelOption) {
+        context.dataStore.edit { it[Keys.MEGAPIXEL] = megapixel.name }
+    }
+
     suspend fun setShutterSoundStyle(style: ShutterSoundStyle) {
         context.dataStore.edit { it[Keys.SHUTTER_SOUND] = style.name }
     }
 
     suspend fun setAudioRecordingFormat(format: AudioRecordingFormat) {
         context.dataStore.edit { it[Keys.AUDIO_FORMAT] = format.name }
+    }
+
+    suspend fun setAutoSaveToGallery(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.AUTO_SAVE] = enabled }
     }
 
     suspend fun setHapticsEnabled(enabled: Boolean) {

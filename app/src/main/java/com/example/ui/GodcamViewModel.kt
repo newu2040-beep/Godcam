@@ -45,6 +45,8 @@ import com.example.model.HardwareCapabilities
 import com.example.model.MediaItemModel
 import com.example.model.MeteringModeOption
 import com.example.model.PhotoFormat
+import com.example.model.PhotoMegapixelOption
+import com.example.model.ProOpticalState
 import com.example.model.ShutterSoundStyle
 import com.example.model.StabilizationMode
 import android.media.AudioManager
@@ -103,8 +105,10 @@ data class CameraUiState(
     val countdownRemainingSec: Int = 0,
     val aspectRatio: AspectRatioOption = AspectRatioOption.RATIO_4_3,
     val photoFormat: PhotoFormat = PhotoFormat.JPEG,
+    val photoMegapixel: PhotoMegapixelOption = PhotoMegapixelOption.MP_50,
     val shutterSoundStyle: ShutterSoundStyle = ShutterSoundStyle.FUJI_MECHANICAL,
     val audioRecordingFormat: AudioRecordingFormat = AudioRecordingFormat.AAC_LC_STEREO_48K,
+    val autoSaveToGallery: Boolean = true,
     // Manual / Pro Photo & Video settings
     val isAutoIso: Boolean = true,
     val manualIso: Int = 100,
@@ -153,6 +157,7 @@ data class CameraUiState(
     val shutterFlashVisible: Boolean = false,
     val focusPointNormalized: Pair<Float, Float>? = null,
     val statusBannerMessage: String? = null,
+    val pendingUnsavedMedia: MediaItemModel? = null,
     // Gallery & Export Studio state
     val selectedGalleryTab: GalleryTab = GalleryTab.PHOTOS,
     val gallerySearchQuery: String = "",
@@ -166,6 +171,24 @@ data class CameraUiState(
 ) {
     val allCorePermissionsGranted: Boolean
         get() = cameraPermissionGranted && micPermissionGranted && notificationsPermissionGranted
+
+    val isVideoFamilyMode: Boolean
+        get() = captureMode == CaptureMode.VIDEO || captureMode == CaptureMode.PRO_VIDEO
+
+    fun toProOpticalState(): ProOpticalState {
+        return ProOpticalState(
+            isAutoIso = isAutoIso,
+            manualIso = manualIso,
+            isAutoShutter = isAutoShutter,
+            shutterDenominator = shutterDenominator,
+            exposureEv = exposureEv,
+            whiteBalance = whiteBalance,
+            manualKelvin = manualKelvin,
+            colorProfile = colorProfile,
+            zoomRatio = activeZoom,
+            hardwareOpticalMaxZoom = capabilities.hardwareOpticalMaxZoom
+        )
+    }
 
     fun effectiveVideoDimensions(): Pair<Int, Int> {
         return if (useCustomVideoSize) {
@@ -244,14 +267,21 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
                     } else {
                         state.capabilities.supportedAudioFormats.firstOrNull() ?: AudioRecordingFormat.AAC_LC_STEREO_48K
                     }
+                    val validMp = if (prefs.defaultMegapixel in state.capabilities.supportedMegapixels) {
+                        prefs.defaultMegapixel
+                    } else {
+                        state.capabilities.supportedMegapixels.lastOrNull() ?: PhotoMegapixelOption.MP_50
+                    }
                     state.copy(
                         gridMode = prefs.defaultGrid,
                         aspectRatio = prefs.defaultRatio,
                         photoFormat = prefs.defaultPhotoFormat,
+                        photoMegapixel = validMp,
                         shutterSoundStyle = prefs.shutterSoundStyle,
                         audioRecordingFormat = validAudio,
                         audioMuted = validAudio == AudioRecordingFormat.MUTED,
-                        compactLayoutMode = prefs.compactLayoutMode
+                        compactLayoutMode = prefs.compactLayoutMode,
+                        autoSaveToGallery = prefs.autoSaveToGallery
                     )
                 }
             }
@@ -316,6 +346,11 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
             } else {
                 caps.supportedAudioFormats.firstOrNull() ?: AudioRecordingFormat.AAC_LC_STEREO_48K
             }
+            val resolvedMp = if (current.photoMegapixel in caps.supportedMegapixels) {
+                current.photoMegapixel
+            } else {
+                caps.supportedMegapixels.lastOrNull() ?: PhotoMegapixelOption.MP_50
+            }
             current.copy(
                 capabilities = caps,
                 videoResolution = resolvedRes,
@@ -323,6 +358,7 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
                 videoBitrateMbps = resolvedBitrate,
                 flashMode = resolvedFlash,
                 photoFormat = resolvedFormat,
+                photoMegapixel = resolvedMp,
                 audioRecordingFormat = resolvedAudio,
                 audioMuted = resolvedAudio == AudioRecordingFormat.MUTED
             )
@@ -501,6 +537,29 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
         viewModelScope.launch { repository.setDefaultPhotoFormat(format) }
     }
 
+    fun setPhotoMegapixel(option: PhotoMegapixelOption) {
+        triggerHaptic()
+        val supported = _uiState.value.capabilities.supportedMegapixels
+        val resolved = if (option in supported) option else supported.lastOrNull() ?: PhotoMegapixelOption.MP_50
+        val (outW, outH) = resolved.computeDimensions(_uiState.value.aspectRatio)
+        _uiState.update {
+            it.copy(
+                photoMegapixel = resolved,
+                statusBannerMessage = "Sensor Resolution: ${resolved.label} (${outW}×${outH} • ${resolved.description})"
+            )
+        }
+        viewModelScope.launch { repository.setDefaultMegapixel(resolved) }
+    }
+
+    fun cyclePhotoMegapixel() {
+        val supported = _uiState.value.capabilities.supportedMegapixels.ifEmpty {
+            listOf(PhotoMegapixelOption.MP_12, PhotoMegapixelOption.MP_24, PhotoMegapixelOption.MP_48, PhotoMegapixelOption.MP_50)
+        }
+        val currentIdx = supported.indexOf(_uiState.value.photoMegapixel).coerceAtLeast(0)
+        val next = supported[(currentIdx + 1) % supported.size]
+        setPhotoMegapixel(next)
+    }
+
     fun onTapToFocus(normX: Float, normY: Float) {
         triggerHaptic()
         _uiState.update {
@@ -629,7 +688,25 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
 
     fun setColorProfile(profile: ColorProfileOption) {
         triggerHaptic()
-        _uiState.update { it.copy(colorProfile = profile, statusBannerMessage = "Color Profile: ${profile.label}") }
+        _uiState.update {
+            it.copy(
+                colorProfile = profile,
+                statusBannerMessage = "Video Color Profile: ${profile.label} — ${profile.description}"
+            )
+        }
+    }
+
+    fun toggleLogVideoProfile() {
+        triggerHaptic()
+        val current = _uiState.value.colorProfile
+        val next = when (current) {
+            ColorProfileOption.STANDARD -> ColorProfileOption.FLAT_NATURAL
+            ColorProfileOption.FLAT_NATURAL -> ColorProfileOption.CINE_D_LOG
+            ColorProfileOption.CINE_D_LOG -> ColorProfileOption.S_LOG3
+            ColorProfileOption.S_LOG3 -> ColorProfileOption.HLG_HDR
+            ColorProfileOption.HLG_HDR -> ColorProfileOption.STANDARD
+        }
+        setColorProfile(next)
     }
 
     fun setVideoDurationOption(option: VideoDurationOption) {
@@ -1077,9 +1154,9 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
 
     /**
      * Processes a captured raw photo [Bitmap] from CameraX ImageCapture (MAXIMIZE_QUALITY) / PreviewView,
-     * plays the active Fuji / Digital Camera shutter sound, applies the active FilterPreset + EditRecipe + Exposure EV
-     * at full hardware sensor resolution, and saves it automatically at 100% quality with EXIF tags
-     * into both System Gallery (DCIM/GODCAM) and GODCAM Gallery.
+     * plays the active Fuji / Digital Camera shutter sound, applies the active FilterPreset + EditRecipe +
+     * ProOpticalState (ISO, Shutter, EV, White Balance Kelvin, 100x Zoom) at the selected Megapixel resolution
+     * (12MP, 24MP, 48MP, 50MP, etc.), and either auto-saves to Gallery or holds for review if Auto-Save is OFF.
      */
     fun processAndSaveCapturedPhoto(rawBitmap: Bitmap?) {
         if (_uiState.value.isCapturing) return
@@ -1097,88 +1174,128 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
             _uiState.update { it.copy(isCapturing = true, shutterFlashVisible = true) }
             if (state.nightModeActive) {
                 _uiState.update { it.copy(statusBannerMessage = "Night Mode: Stacking high-dynamic-range frame…") }
-                delay(240)
+                delay(220)
             } else {
-                delay(85)
+                delay(70)
             }
             _uiState.update { it.copy(shutterFlashVisible = false) }
 
             val preset = FilterCatalog.getById(state.activeRecipe.presetId)
+            val proOptical = state.toProOpticalState()
+            val extraDigitalZoom = (state.activeZoom / state.capabilities.hardwareOpticalMaxZoom.coerceAtLeast(1f)).coerceAtLeast(1f)
 
-            // Compute high-resolution hardware output dimensions matching the selected aspect ratio
-            val sensorMaxW = state.capabilities.maxPhotoWidth.coerceIn(1920, 4032)
-            val sensorMaxH = state.capabilities.maxPhotoHeight.coerceIn(1080, 3024)
-            val maxLongEdge = maxOf(sensorMaxW, sensorMaxH, sourceBitmap.width, sourceBitmap.height).coerceIn(1920, 3840)
+            // Nominal megapixel dimensions (e.g., 8192x6144 for 50MP, 8000x6000 for 48MP, 4032x3024 for 12MP)
+            val (nominalMpW, nominalMpH) = state.photoMegapixel.computeDimensions(state.aspectRatio)
+            // Safe in-memory bitmap allocation cap to prevent OOM while preserving exact aspect ratio & high quality
+            val maxAllocEdge = when (state.photoMegapixel.megapixels) {
+                12 -> 4032
+                24 -> 4320
+                else -> 4608
+            }
             val ratioVal = state.aspectRatio.aspectValue
             val (highResW, highResH) = if (ratioVal >= 1f) {
-                val w = maxLongEdge
+                val w = minOf(nominalMpW, maxAllocEdge)
                 val h = (w / ratioVal).roundToInt().coerceAtLeast(480)
                 w to h
             } else {
-                val h = maxLongEdge
+                val h = minOf(nominalMpH, maxAllocEdge)
                 val w = (h * ratioVal).roundToInt().coerceAtLeast(480)
                 w to h
             }
 
-            val filtered = ImageFilterEngine.renderFilteredBitmap(
-                source = sourceBitmap,
-                preset = preset,
-                recipe = state.activeRecipe.copy(aspectRatio = state.aspectRatio),
-                targetWidth = highResW,
-                targetHeight = highResH,
-                applyCrop = true,
-                extraEv = state.exposureEv
-            )
+            val filtered = withContext(Dispatchers.Default) {
+                ImageFilterEngine.renderFilteredBitmap(
+                    source = sourceBitmap,
+                    preset = preset,
+                    recipe = state.activeRecipe.copy(aspectRatio = state.aspectRatio),
+                    targetWidth = highResW,
+                    targetHeight = highResH,
+                    applyCrop = true,
+                    extraEv = state.exposureEv,
+                    proOptical = proOptical,
+                    extraDigitalZoom = extraDigitalZoom
+                )
+            }
 
             val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
             val savedResult = MediaGallerySaver.savePhotoToGallery(
                 context = getApplication(),
                 bitmap = filtered,
-                fileNamePrefix = "GODCAM_IMG_$stamp",
+                fileNamePrefix = "GODCAM_${state.photoMegapixel.shortBadge}_$stamp",
                 photoFormat = state.photoFormat,
                 mimeType = state.photoFormat.mimeType,
                 quality = 100,
-                appliedLookName = preset.name,
+                appliedLookName = "${preset.name} • ${state.photoMegapixel.shortBadge}",
                 focalLengthMm = state.capabilities.focalLengthMm,
                 apertureF = state.capabilities.apertureF,
-                isoValue = if (state.isAutoIso) 100 else state.manualIso
+                isoValue = if (state.isAutoIso) 100 else state.manualIso,
+                publishToSystemGallery = state.autoSaveToGallery
             )
-            val w = savedResult.actualWidth
-            val h = savedResult.actualHeight
             filtered.recycle()
 
             val isoText = if (state.isAutoIso) "ISO Auto" else "ISO ${state.manualIso}"
-            val shutterText = if (state.isAutoShutter) "Auto Shutter" else "1/${state.shutterDenominator}s"
-            val evText = if (state.exposureEv == 0f) "0.0 EV" else "${if (state.exposureEv > 0) "+" else ""}${state.exposureEv} EV"
-            val title = "GODCAM_${stamp.takeLast(6)}"
+            val shutterText = if (state.isAutoShutter) "Auto S" else "1/${state.shutterDenominator}s"
+            val wbText = if (state.whiteBalance == WhiteBalancePreset.MANUAL_KELVIN) "${state.manualKelvin}K" else state.whiteBalance.label
+            val zoomText = if (state.activeZoom >= 10f) "${state.activeZoom.roundToInt()}×" else "${(state.activeZoom * 10f).roundToInt() / 10f}×"
+            val title = "GODCAM_${state.photoMegapixel.shortBadge}_${stamp.takeLast(6)}"
+            val formatBadge = "${state.photoFormat.label} • ${state.photoMegapixel.shortBadge}"
+            val cameraInfo = "${state.photoMegapixel.label} (${nominalMpW}×${nominalMpH}) • $zoomText • $isoText • $shutterText • $wbText • ${preset.name}"
 
-            repository.insertCapturedOrExportedMedia(
-                title = title,
-                filePath = savedResult.localFile.absolutePath,
-                uriString = savedResult.mediaStoreUri?.toString() ?: savedResult.localFile.toURI().toString(),
-                isVideo = false,
-                width = w,
-                height = h,
-                durationSec = 0,
-                formatLabel = state.photoFormat.label,
-                sizeBytes = savedResult.sizeBytes,
-                appliedPresetId = preset.id,
-                appliedIntensity = state.activeRecipe.intensity,
-                cameraInfo = "${state.capabilities.focalLengthMm}mm f/${state.capabilities.apertureF} • $isoText • $shutterText • $evText • ${preset.name}"
-            )
-
-            MediaGallerySaver.sendAutoSaveNotification(
-                context = getApplication(),
-                title = "High-Quality Photo Saved",
-                message = "$title (${w}×${h} ${state.photoFormat.label} • ${preset.name}) saved to DCIM/GODCAM."
-            )
-
-            _uiState.update {
-                it.copy(
-                    isCapturing = false,
-                    selectedGalleryTab = GalleryTab.PHOTOS,
-                    statusBannerMessage = "Saved High-Res Photo (${w}×${h} ${state.photoFormat.label} • ${preset.name})"
+            if (state.autoSaveToGallery) {
+                repository.insertCapturedOrExportedMedia(
+                    title = title,
+                    filePath = savedResult.localFile.absolutePath,
+                    uriString = savedResult.mediaStoreUri?.toString() ?: savedResult.localFile.toURI().toString(),
+                    isVideo = false,
+                    width = nominalMpW,
+                    height = nominalMpH,
+                    durationSec = 0,
+                    formatLabel = formatBadge,
+                    sizeBytes = savedResult.sizeBytes,
+                    appliedPresetId = preset.id,
+                    appliedIntensity = state.activeRecipe.intensity,
+                    cameraInfo = cameraInfo
                 )
+
+                MediaGallerySaver.sendAutoSaveNotification(
+                    context = getApplication(),
+                    title = "${state.photoMegapixel.label} Photo Saved",
+                    message = "$title (${nominalMpW}×${nominalMpH} ${state.photoFormat.label} • ${preset.name}) saved to DCIM/GODCAM."
+                )
+
+                _uiState.update {
+                    it.copy(
+                        isCapturing = false,
+                        pendingUnsavedMedia = null,
+                        selectedGalleryTab = GalleryTab.PHOTOS,
+                        statusBannerMessage = "Saved ${state.photoMegapixel.label} Photo (${nominalMpW}×${nominalMpH} ${state.photoFormat.label} • $zoomText • ${preset.name})"
+                    )
+                }
+            } else {
+                val pendingItem = MediaItemModel(
+                    id = System.currentTimeMillis(),
+                    title = title,
+                    filePath = savedResult.localFile.absolutePath,
+                    uriString = savedResult.localFile.toURI().toString(),
+                    isVideo = false,
+                    width = nominalMpW,
+                    height = nominalMpH,
+                    durationSec = 0,
+                    formatLabel = formatBadge,
+                    sizeBytes = savedResult.sizeBytes,
+                    timestampMs = System.currentTimeMillis(),
+                    isFavorite = false,
+                    appliedPresetId = preset.id,
+                    appliedIntensity = state.activeRecipe.intensity,
+                    cameraInfo = cameraInfo
+                )
+                _uiState.update {
+                    it.copy(
+                        isCapturing = false,
+                        pendingUnsavedMedia = pendingItem,
+                        statusBannerMessage = "Auto-Save OFF • Captured ${state.photoMegapixel.label} Photo — Tap 'Save' below to keep"
+                    )
+                }
             }
         }
     }
@@ -1186,7 +1303,6 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
     fun startVideoRecordingTimer() {
         triggerHaptic()
         val state = _uiState.value
-        // Keep AudioManager in MODE_NORMAL without requesting audio focus so background music keeps playing uninterrupted
         if (state.allowBackgroundMusic) {
             runCatching {
                 val am = getApplication<Application>().getSystemService(Context.AUDIO_SERVICE) as? AudioManager
@@ -1198,12 +1314,13 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
         val (vidW, vidH) = state.effectiveVideoDimensions()
         val targetDur = state.effectiveTargetVideoDurationSec()
         val durTag = if (targetDur > 0) "Auto-Stop ${targetDur}s" else "Continuous"
+        val logTag = if (state.colorProfile.isLog) " · ${state.colorProfile.shortBadge}" else ""
         _uiState.update {
             it.copy(
                 isRecordingVideo = true,
                 isRecordingPaused = false,
                 recordingElapsedSec = 0,
-                statusBannerMessage = "REC ${vidW}×${vidH} (${it.aspectRatio.label}) · $durTag · ${preset.name}"
+                statusBannerMessage = "REC ${vidW}×${vidH} ${it.videoFps.label}$logTag · $durTag · ${preset.name}"
             )
         }
         recordingJob?.cancel()
@@ -1247,26 +1364,29 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
                 ?: ImageFilterEngine.createNeutralCalibrationBitmap(videoW, videoH)
 
             val recipeWithRatio = state.activeRecipe.copy(aspectRatio = state.aspectRatio)
-            val extraEv = state.exposureEv + if (state.colorProfile == ColorProfileOption.FLAT_NATURAL) 0.1f else 0f
+            val proOptical = state.toProOpticalState()
+            val extraDigitalZoom = (state.activeZoom / state.capabilities.hardwareOpticalMaxZoom.coerceAtLeast(1f)).coerceAtLeast(1f)
 
             // Perform all bitmap filtering off the main thread on Dispatchers.Default so UI stays 60fps smooth
             val (filteredPoster, filteredMotionFrames) = withContext(Dispatchers.Default) {
-                val poster = ImageFilterEngine.renderFilteredBitmap(
+                val poster = ImageFilterEngine.renderFilteredBitmapSync(
                     source = rawFrame,
                     preset = preset,
                     recipe = recipeWithRatio,
                     targetWidth = videoW,
                     targetHeight = videoH,
                     applyCrop = !state.useCustomVideoSize,
-                    extraEv = extraEv
+                    extraEv = state.exposureEv,
+                    proOptical = proOptical,
+                    extraDigitalZoom = extraDigitalZoom
                 )
 
-                val scaleDown = if (maxOf(videoW, videoH) > 960) 960f / maxOf(videoW, videoH).toFloat() else 1f
+                val scaleDown = if (maxOf(videoW, videoH) > 720) 720f / maxOf(videoW, videoH).toFloat() else 1f
                 val frameTargetW = ((videoW * scaleDown).roundToInt().coerceAtLeast(320)).let { if (it % 2 != 0) it + 1 else it }
                 val frameTargetH = ((videoH * scaleDown).roundToInt().coerceAtLeast(320)).let { if (it % 2 != 0) it + 1 else it }
 
                 val sourceList = if (capturedFrames.isNotEmpty()) capturedFrames else listOf(rawFrame)
-                val maxToRender = sourceList.size.coerceAtMost(96)
+                val maxToRender = sourceList.size.coerceAtMost(120)
                 val sampledSources = if (sourceList.size <= maxToRender) {
                     sourceList
                 } else {
@@ -1280,14 +1400,16 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
 
                 val motionFrames = sampledSources.mapNotNull { frame ->
                     runCatching {
-                        ImageFilterEngine.renderFilteredBitmap(
+                        ImageFilterEngine.renderFilteredBitmapSync(
                             source = frame,
                             preset = preset,
                             recipe = recipeWithRatio,
                             targetWidth = frameTargetW,
                             targetHeight = frameTargetH,
                             applyCrop = !state.useCustomVideoSize,
-                            extraEv = extraEv
+                            extraEv = state.exposureEv,
+                            proOptical = proOptical,
+                            extraDigitalZoom = extraDigitalZoom
                         )
                     }.getOrNull()
                 }
@@ -1305,7 +1427,8 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
                 width = videoW,
                 height = videoH,
                 fps = state.videoFps.fps,
-                bitrateMbps = state.videoBitrateMbps
+                bitrateMbps = state.videoBitrateMbps,
+                publishToSystemGallery = state.autoSaveToGallery
             )
             filteredPoster.recycle()
             filteredMotionFrames.forEach { runCatching { it.recycle() } }
@@ -1316,37 +1439,122 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
             }
 
             val audioTag = state.audioRecordingFormat.label
+            val logBadge = if (state.colorProfile.isLog) " • ${state.colorProfile.shortBadge}" else ""
             val title = "GODCAM_VID_${stamp.takeLast(6)}"
-            val badgeLabel = if (state.useCustomVideoSize) "CUSTOM" else state.videoResolution.shortLabel
+            val baseBadge = if (state.useCustomVideoSize) "CUSTOM" else state.videoResolution.shortLabel
+            val badgeLabel = "$baseBadge • ${state.videoFps.fps}fps$logBadge"
+            val cameraInfo = "${savedVideo.actualWidth}×${savedVideo.actualHeight} • ${duration}s • ${state.aspectRatio.label} • ${state.videoFps.fps}fps • ${state.colorProfile.shortBadge} • ${state.stabilizationMode.label} • $audioTag • ${preset.name}"
 
-            repository.insertCapturedOrExportedMedia(
-                title = title,
-                filePath = savedVideo.posterFile.absolutePath,
-                uriString = savedVideo.localFile.absolutePath,
-                isVideo = true,
-                width = savedVideo.actualWidth,
-                height = savedVideo.actualHeight,
-                durationSec = duration,
-                formatLabel = badgeLabel,
-                sizeBytes = savedVideo.sizeBytes,
-                appliedPresetId = preset.id,
-                appliedIntensity = state.activeRecipe.intensity,
-                cameraInfo = "${savedVideo.actualWidth}×${savedVideo.actualHeight} • ${duration}s • ${state.aspectRatio.label} • ${state.videoFps.fps}fps • ${state.stabilizationMode.label} • $audioTag • ${preset.name}"
-            )
+            if (state.autoSaveToGallery) {
+                repository.insertCapturedOrExportedMedia(
+                    title = title,
+                    filePath = savedVideo.posterFile.absolutePath,
+                    uriString = savedVideo.localFile.absolutePath,
+                    isVideo = true,
+                    width = savedVideo.actualWidth,
+                    height = savedVideo.actualHeight,
+                    durationSec = duration,
+                    formatLabel = badgeLabel,
+                    sizeBytes = savedVideo.sizeBytes,
+                    appliedPresetId = preset.id,
+                    appliedIntensity = state.activeRecipe.intensity,
+                    cameraInfo = cameraInfo
+                )
 
-            MediaGallerySaver.sendAutoSaveNotification(
+                MediaGallerySaver.sendAutoSaveNotification(
+                    context = getApplication(),
+                    title = "High-Quality Video Saved",
+                    message = "$title (${savedVideo.actualWidth}×${savedVideo.actualHeight} • ${duration}s • ${state.videoFps.fps}fps$logBadge • ${preset.name}) saved to DCIM/GODCAM."
+                )
+
+                _uiState.update {
+                    it.copy(
+                        isCapturing = false,
+                        pendingUnsavedMedia = null,
+                        selectedGalleryTab = GalleryTab.VIDEOS,
+                        statusBannerMessage = "Saved ${duration}s Video (${savedVideo.actualWidth}×${savedVideo.actualHeight} ${state.videoFps.fps}fps$logBadge • ${preset.name})"
+                    )
+                }
+            } else {
+                val pendingVideo = MediaItemModel(
+                    id = System.currentTimeMillis(),
+                    title = title,
+                    filePath = savedVideo.posterFile.absolutePath,
+                    uriString = savedVideo.localFile.absolutePath,
+                    isVideo = true,
+                    width = savedVideo.actualWidth,
+                    height = savedVideo.actualHeight,
+                    durationSec = duration,
+                    formatLabel = badgeLabel,
+                    sizeBytes = savedVideo.sizeBytes,
+                    timestampMs = System.currentTimeMillis(),
+                    isFavorite = false,
+                    appliedPresetId = preset.id,
+                    appliedIntensity = state.activeRecipe.intensity,
+                    cameraInfo = cameraInfo
+                )
+                _uiState.update {
+                    it.copy(
+                        isCapturing = false,
+                        pendingUnsavedMedia = pendingVideo,
+                        statusBannerMessage = "Auto-Save OFF • Recorded ${duration}s Video — Tap 'Save' below to keep"
+                    )
+                }
+            }
+        }
+    }
+
+    fun savePendingCaptureToGallery() {
+        val pending = _uiState.value.pendingUnsavedMedia ?: return
+        triggerHaptic()
+        viewModelScope.launch {
+            val fileToPublish = if (pending.isVideo) File(pending.uriString) else File(pending.filePath)
+            val publishedUri = MediaGallerySaver.publishExistingFileToGallery(
                 context = getApplication(),
-                title = "High-Quality Video Saved",
-                message = "$title (${savedVideo.actualWidth}×${savedVideo.actualHeight} • ${duration}s • ${state.videoFps.fps}fps • ${preset.name}) saved to DCIM/GODCAM."
+                localFile = fileToPublish,
+                isVideo = pending.isVideo,
+                width = pending.width,
+                height = pending.height,
+                durationSec = pending.durationSec
             )
-
+            repository.insertCapturedOrExportedMedia(
+                title = pending.title,
+                filePath = pending.filePath,
+                uriString = if (pending.isVideo) pending.uriString else (publishedUri?.toString() ?: pending.uriString),
+                isVideo = pending.isVideo,
+                width = pending.width,
+                height = pending.height,
+                durationSec = pending.durationSec,
+                formatLabel = pending.formatLabel,
+                sizeBytes = pending.sizeBytes,
+                appliedPresetId = pending.appliedPresetId,
+                appliedIntensity = pending.appliedIntensity,
+                cameraInfo = pending.cameraInfo
+            )
             _uiState.update {
                 it.copy(
-                    isCapturing = false,
-                    selectedGalleryTab = GalleryTab.VIDEOS,
-                    statusBannerMessage = "Saved ${duration}s Video (${savedVideo.actualWidth}×${savedVideo.actualHeight} ${state.videoFps.fps}fps • ${preset.name})"
+                    pendingUnsavedMedia = null,
+                    selectedGalleryTab = if (pending.isVideo) GalleryTab.VIDEOS else GalleryTab.PHOTOS,
+                    statusBannerMessage = "Saved ${pending.title} (${pending.width}×${pending.height}) to Gallery"
                 )
             }
+        }
+    }
+
+    fun discardPendingCapture() {
+        val pending = _uiState.value.pendingUnsavedMedia ?: return
+        triggerHaptic()
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { File(pending.filePath).delete() }
+            if (pending.isVideo) {
+                runCatching { File(pending.uriString).delete() }
+            }
+        }
+        _uiState.update {
+            it.copy(
+                pendingUnsavedMedia = null,
+                statusBannerMessage = "Discarded unsaved capture (${pending.title})"
+            )
         }
     }
 
@@ -1671,6 +1879,21 @@ class GodcamViewModel(application: Application) : AndroidViewModel(application),
 
     fun setPreserveLocation(enabled: Boolean) {
         viewModelScope.launch { repository.setPreserveLocation(enabled) }
+    }
+
+    fun setAutoSaveToGallery(enabled: Boolean) {
+        triggerHaptic()
+        _uiState.update {
+            it.copy(
+                autoSaveToGallery = enabled,
+                statusBannerMessage = if (enabled) {
+                    "Auto-Save Photos & Videos: ON (Saves automatically to Gallery)"
+                } else {
+                    "Auto-Save Photos & Videos: OFF (Review & confirm before saving)"
+                }
+            )
+        }
+        viewModelScope.launch { repository.setAutoSaveToGallery(enabled) }
     }
 
     fun showBanner(message: String?) {

@@ -115,3 +115,95 @@ val MidnightActive = Color(0xFF356955)
 val MidnightText = Color(0xFFFAFCFB)
 val MidnightSubtleText = Color(0xFFAAB8B1)
 val MidnightBorder = Color(0xFF2D3A34)
+
+// Pastel Coral Theme
+val PastelCoralBg = Color(0xFFFFF2EE)
+val PastelCoralSurface = Color(0xFFFFF9F7)
+val PastelCoralAccent = Color(0xFFF28B7D)
+val PastelCoralActive = Color(0xFF82291E)
+val PastelCoralText = Color(0xFF280C08)
+val PastelCoralBorder = Color(0xFFEBC5BF)
+
+// Pastel Mint Gelato Theme
+val PastelMintGelatoBg = Color(0xFFEAFBF4)
+val PastelMintGelatoSurface = Color(0xFFF6FEFB)
+val PastelMintGelatoAccent = Color(0xFF63CCA2)
+val PastelMintGelatoActive = Color(0xFF12593D)
+val PastelMintGelatoText = Color(0xFF092419)
+val PastelMintGelatoBorder = Color(0xFFB4DFCD)
+
+// Pastel Rosewater Theme
+val PastelRosewaterBg = Color(0xFFFFF0F3)
+val PastelRosewaterSurface = Color(0xFFFFF8FA)
+val PastelRosewaterAccent = Color(0xFFE38BA0)
+val PastelRosewaterActive = Color(0xFF752236)
+val PastelRosewaterText = Color(0xFF260B12)
+val PastelRosewaterBorder = Color(0xFFE8C1CB)
+
+// Pastel Honeydew Theme
+val PastelHoneydewBg = Color(0xFFF3FCEB)
+val PastelHoneydewSurface = Color(0xFFFAFEF6)
+val PastelHoneydewAccent = Color(0xFF8ECC6A)
+val PastelHoneydewActive = Color(0xFF2C5E14)
+val PastelHoneydewText = Color(0xFF122608)
+val PastelHoneydewBorder = Color(0xFFC4E0B4)
+
+// Pastel Periwinkle Theme
+val PastelPeriwinkleBg = Color(0xFFEEF1FF)
+val PastelPeriwinkleSurface = Color(0xFFF8F9FF)
+val PastelPeriwinkleAccent = Color(0xFF8A9CF2)
+val PastelPeriwinkleActive = Color(0xFF233482)
+val PastelPeriwinkleText = Color(0xFF0D1433)
+val PastelPeriwinkleBorder = Color(0xFFC1C9EB)
+
+// Pastel Chamomile Theme
+val PastelChamomileBg = Color(0xFFFFFBE8)
+val PastelChamomileSurface = Color(0xFFFFFEF6)
+val PastelChamomileAccent = Color(0xFFE8C558)
+val PastelChamomileActive = Color(0xFF6E5306)
+val PastelChamomileText = Color(0xFF261D03)
+val PastelChamomileBorder = Color(0xFFE3D5A6)
+
+// Fuji Silver Dial Theme
+val FujiSilverBg = Color(0xFFECECE9)
+val FujiSilverSurface = Color(0xFFF9F9F7)
+val FujiSilverAccent = Color(0xFF7A8288)
+val FujiSilverActive = Color(0xFF22282C)
+val FujiSilverText = Color(0xFF121517)
+val FujiSilverBorder = Color(0xFFC5C8CA)
+
+// Nordic Snow Theme
+val NordicSnowBg = Color(0xFFF2F6FA)
+val NordicSnowSurface = Color(0xFFFFFFFF)
+val NordicSnowAccent = Color(0xFF6B92B5)
+val NordicSnowActive = Color(0xFF1C3F5E)
+val NordicSnowText = Color(0xFF0E1D2B)
+val NordicSnowBorder = Color(0xFFC4D3E0)
+
+// Leica Brass Dark Theme
+val LeicaBrassBg = Color(0xFF12110E)
+val LeicaBrassSurface = Color(0xFF1D1B16)
+val LeicaBrassAccent = Color(0xFFD6AE58)
+val LeicaBrassActive = Color(0xFF70561E)
+val LeicaBrassText = Color(0xFFFAF6ED)
+val LeicaBrassSubtle = Color(0xFFC2B9A7)
+val LeicaBrassBorder = Color(0xFF3B3529)
+
+// Tokyo Neon Dark Theme
+val TokyoNeonBg = Color(0xFF0C0F1A)
+val TokyoNeonSurface = Color(0xFF151B2E)
+val TokyoNeonAccent = Color(0xFF4CE0B3)
+val TokyoNeonActive = Color(0xFF1B6B54)
+val TokyoNeonText = Color(0xFFF2F7FF)
+val TokyoNeonSubtle = Color(0xFFA6B6D4)
+val TokyoNeonBorder = Color(0xFF293554)
+
+// Espresso Club Dark Theme
+val EspressoClubBg = Color(0xFF17120F)
+val EspressoClubSurface = Color(0xFF241C18)
+val EspressoClubAccent = Color(0xFFD19A72)
+val EspressoClubActive = Color(0xFF6E472B)
+val EspressoClubText = Color(0xFFFAF3EE)
+val EspressoClubSubtle = Color(0xFFC4B3A7)
+val EspressoClubBorder = Color(0xFF3D3029)
+

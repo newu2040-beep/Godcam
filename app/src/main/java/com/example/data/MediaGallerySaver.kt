@@ -107,9 +107,9 @@ object MediaGallerySaver {
     }
 
     /**
-     * Automatically saves a captured or filtered photo at maximum hardware quality (100%)
-     * with real EXIF optical metadata into both app storage and the system Android Gallery
-     * (MediaStore.Images.Media under DCIM/GODCAM).
+     * Saves a captured or filtered photo at maximum hardware quality (100%)
+     * with real EXIF optical metadata into app storage and (when [publishToSystemGallery] is true)
+     * into the system Android Gallery (MediaStore.Images.Media under DCIM/GODCAM).
      */
     suspend fun savePhotoToGallery(
         context: Context,
@@ -121,7 +121,8 @@ object MediaGallerySaver {
         appliedLookName: String = "Original",
         focalLengthMm: Float = 4.2f,
         apertureF: Float = 1.8f,
-        isoValue: Int = 100
+        isoValue: Int = 100,
+        publishToSystemGallery: Boolean = true
     ): SavedMediaResult = withContext(Dispatchers.IO) {
         val dir = File(context.filesDir, "godcam_media").apply { mkdirs() }
         val ext = when (photoFormat) {
@@ -159,7 +160,7 @@ object MediaGallerySaver {
                 val exifDate = SimpleDateFormat("yyyy:MM:dd HH:mm:ss", Locale.US).format(Date())
                 exif.setAttribute(ExifInterface.TAG_MAKE, Build.MANUFACTURER.ifBlank { "Android" })
                 exif.setAttribute(ExifInterface.TAG_MODEL, Build.MODEL.ifBlank { "GODCAM Optical Sensor" })
-                exif.setAttribute(ExifInterface.TAG_SOFTWARE, "GODCAM Studio • $appliedLookName")
+                exif.setAttribute(ExifInterface.TAG_SOFTWARE, "GODCAM Studio v5.0 • $appliedLookName")
                 exif.setAttribute(ExifInterface.TAG_DATETIME, exifDate)
                 exif.setAttribute(ExifInterface.TAG_DATETIME_ORIGINAL, exifDate)
                 exif.setAttribute(ExifInterface.TAG_IMAGE_WIDTH, bitmap.width.toString())
@@ -173,14 +174,18 @@ object MediaGallerySaver {
             }
         }
 
-        val mediaStoreUri = publishImageToMediaStore(
-            context = context,
-            sourceFile = localFile,
-            displayName = fileName,
-            mimeType = resolvedMime,
-            width = bitmap.width,
-            height = bitmap.height
-        )
+        val mediaStoreUri = if (publishToSystemGallery) {
+            publishImageToMediaStore(
+                context = context,
+                sourceFile = localFile,
+                displayName = fileName,
+                mimeType = resolvedMime,
+                width = bitmap.width,
+                height = bitmap.height
+            )
+        } else {
+            null
+        }
 
         SavedMediaResult(
             localFile = localFile,
@@ -193,9 +198,9 @@ object MediaGallerySaver {
     }
 
     /**
-     * Automatically saves a recorded video (.mp4) + high-quality filtered poster frame (.jpg)
-     * + filtered motion frame sequence at the selected resolution into both app storage
-     * and the system Android Gallery (MediaStore.Video.Media under DCIM/GODCAM).
+     * Saves a recorded video (.mp4) + high-quality filtered poster frame (.jpg)
+     * + filtered motion frame sequence at the selected resolution into app storage
+     * and (when [publishToSystemGallery] is true) into the system Android Gallery (DCIM/GODCAM).
      */
     suspend fun saveVideoToGallery(
         context: Context,
@@ -206,21 +211,22 @@ object MediaGallerySaver {
         width: Int = 1920,
         height: Int = 1080,
         fps: Int = 30,
-        bitrateMbps: Int = 40
+        bitrateMbps: Int = 40,
+        publishToSystemGallery: Boolean = true
     ): SavedMediaResult = withContext(Dispatchers.IO) {
         val dir = File(context.filesDir, "godcam_media").apply { mkdirs() }
         val stamp = System.currentTimeMillis()
         val posterFile = File(dir, "GODCAM_VID_POSTER_$stamp.jpg")
 
         FileOutputStream(posterFile).use { fos ->
-            posterBitmap.compress(Bitmap.CompressFormat.JPEG, 100, fos)
+            posterBitmap.compress(Bitmap.CompressFormat.JPEG, 96, fos)
             fos.flush()
         }
 
-        // Save up to 96 aspect-ratio-accurate filtered motion frames evenly sampled across the entire recording
-        // so FullScreenMediaViewer plays back the full duration smoothly from start to finish without cutting off
+        // Save up to 120 aspect-ratio-accurate filtered motion frames evenly sampled across the entire recording
+        // so FullScreenMediaViewer plays back 30fps/60fps smoothly from start to finish without lag or jitter
         val rawFrames = if (capturedFrames.isNotEmpty()) capturedFrames else listOf(posterBitmap)
-        val maxPersistCount = rawFrames.size.coerceAtMost(96)
+        val maxPersistCount = rawFrames.size.coerceAtMost(120)
         val framesToPersist = if (rawFrames.size <= maxPersistCount) {
             rawFrames
         } else {
@@ -236,7 +242,7 @@ object MediaGallerySaver {
                 runCatching {
                     val frameFile = File(dir, "GODCAM_VID_POSTER_${stamp}_F$idx.jpg")
                     FileOutputStream(frameFile).use { fos ->
-                        bmp.compress(Bitmap.CompressFormat.JPEG, 92, fos)
+                        bmp.compress(Bitmap.CompressFormat.JPEG, 88, fos)
                     }
                 }
             }
@@ -275,14 +281,18 @@ object MediaGallerySaver {
             targetMp4
         }
 
-        val mediaStoreUri = publishVideoToMediaStore(
-            context = context,
-            videoFile = mp4File,
-            fileName = mp4File.name,
-            durationMs = durationSec.coerceAtLeast(1) * 1000L,
-            width = actualW,
-            height = actualH
-        )
+        val mediaStoreUri = if (publishToSystemGallery) {
+            publishVideoToMediaStore(
+                context = context,
+                videoFile = mp4File,
+                fileName = mp4File.name,
+                durationMs = durationSec.coerceAtLeast(1) * 1000L,
+                width = actualW,
+                height = actualH
+            )
+        } else {
+            null
+        }
 
         SavedMediaResult(
             localFile = mp4File,
@@ -295,6 +305,45 @@ object MediaGallerySaver {
     }
 
     /**
+     * Publishes an existing local photo or video file to the system Android Gallery (DCIM/GODCAM)
+     * when the user manually confirms saving while Auto-Save is turned OFF.
+     */
+    suspend fun publishExistingFileToGallery(
+        context: Context,
+        localFile: File,
+        isVideo: Boolean,
+        width: Int,
+        height: Int,
+        durationSec: Int = 0
+    ): Uri? = withContext(Dispatchers.IO) {
+        if (!localFile.exists()) return@withContext null
+        if (isVideo) {
+            publishVideoToMediaStore(
+                context = context,
+                videoFile = localFile,
+                fileName = localFile.name,
+                durationMs = durationSec.coerceAtLeast(1) * 1000L,
+                width = width,
+                height = height
+            )
+        } else {
+            val mime = when (localFile.extension.lowercase(Locale.US)) {
+                "png" -> "image/png"
+                "webp" -> "image/webp"
+                else -> "image/jpeg"
+            }
+            publishImageToMediaStore(
+                context = context,
+                sourceFile = localFile,
+                displayName = localFile.name,
+                mimeType = mime,
+                width = width,
+                height = height
+            )
+        }
+    }
+
+    /**
      * Loads the persisted filtered motion frames for a recorded video off the main thread so FullScreenMediaViewer
      * displays smooth, zero-stretch, filter-accurate playback across the full recorded duration.
      */
@@ -304,12 +353,14 @@ object MediaGallerySaver {
         val parent = posterFile.parentFile ?: return emptyList()
         val baseName = posterFile.nameWithoutExtension
         val loaded = mutableListOf<Bitmap>()
-        for (idx in 0 until 96) {
+        for (idx in 0 until 120) {
             val f = File(parent, "${baseName}_F$idx.jpg")
             if (f.exists() && f.length() > 0L) {
                 runCatching {
                     android.graphics.BitmapFactory.decodeFile(f.absolutePath)?.let { loaded.add(it) }
                 }
+            } else if (idx > 0) {
+                break
             }
         }
         if (loaded.isEmpty() && posterFile.exists()) {

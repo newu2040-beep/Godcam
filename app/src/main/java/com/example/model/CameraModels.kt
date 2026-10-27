@@ -17,6 +17,29 @@ enum class CompactLayoutMode(val label: String, val shortLabel: String, val desc
     COMFORTABLE("Spacious Mode", "Spacious", "Larger controls and generous spacing for big screens")
 }
 
+enum class PhotoMegapixelOption(
+    val label: String,
+    val shortBadge: String,
+    val megapixels: Int,
+    val width4x3: Int,
+    val height4x3: Int,
+    val description: String
+) {
+    MP_12("12 MP", "12MP", 12, 4032, 3024, "Quad-Bayer pixel binning • Fast low-light capture (4032×3024)"),
+    MP_24("24 MP", "24MP", 24, 5664, 4248, "Super-Resolution optical fusion • Balanced detail (5664×4248)"),
+    MP_48("48 MP", "48MP", 48, 8000, 6000, "High-Resolution full sensor readout (8000×6000)"),
+    MP_50("50 MP", "50MP", 50, 8192, 6144, "Flagship 50MP full-array optical detail (8192×6144)"),
+    MP_64("64 MP", "64MP", 64, 9248, 6936, "Ultra-High-Resolution studio still capture (9248×6936)"),
+    MP_108("108 MP", "108MP", 108, 12000, 9000, "Extreme 108MP archival sensor detail (12000×9000)"),
+    MP_200("200 MP", "200MP", 200, 16320, 12240, "Master 200MP ultra-sensor resolution (16320×12240)");
+
+    val longEdge: Int get() = maxOf(width4x3, height4x3)
+
+    fun computeDimensions(aspectRatio: AspectRatioOption): Pair<Int, Int> {
+        return aspectRatio.computeDimensionsForLongEdge(longEdge)
+    }
+}
+
 enum class AspectRatioOption(
     val label: String,
     val widthRatio: Float,
@@ -50,7 +73,7 @@ enum class AspectRatioOption(
     val aspectValue: Float get() = widthRatio / heightRatio
 
     fun computeDimensionsForLongEdge(longEdge: Int): Pair<Int, Int> {
-        val safeLong = longEdge.coerceIn(320, 7680).let { if (it % 2 != 0) it + 1 else it }
+        val safeLong = longEdge.coerceIn(320, 16320).let { if (it % 2 != 0) it + 1 else it }
         val ratio = aspectValue
         return if (ratio >= 1f) {
             val w = safeLong
@@ -172,9 +195,17 @@ enum class StabilizationMode(val label: String, val description: String) {
     OFF("Off", "Native unstabilized sensor readout")
 }
 
-enum class ColorProfileOption(val label: String, val description: String) {
-    STANDARD("Rec.709 Standard", "Accurate contrast and natural saturation"),
-    FLAT_NATURAL("Natural Flat / Log", "Wide dynamic range flat curve for color grading")
+enum class ColorProfileOption(
+    val label: String,
+    val shortBadge: String,
+    val description: String,
+    val isLog: Boolean = false
+) {
+    STANDARD("Rec.709 Standard", "Rec.709", "Accurate contrast and natural saturation", isLog = false),
+    FLAT_NATURAL("G-Log (10-Bit Curve)", "G-LOG", "Wide dynamic range logarithmic curve with lifted shadows", isLog = true),
+    CINE_D_LOG("Cinema D-Log M", "D-LOG", "Flat cinema digital negative for LUT color grading", isLog = true),
+    S_LOG3("S-Log3 / S-Gamut3", "S-LOG3", "Master broadcast logarithmic gamma with maximum highlight latitude", isLog = true),
+    HLG_HDR("HLG 10-Bit HDR", "HLG", "Hybrid Log-Gamma curve with rich midtone latitude", isLog = false)
 }
 
 enum class ShutterSoundStyle(
@@ -383,6 +414,60 @@ enum class AppThemeOption(
         0xFF0E261A,
         isDark = false
     ),
+    PASTEL_CORAL(
+        "pastel_coral",
+        "Pastel Coral",
+        "Sun-drenched coral blush with deep mahogany ink",
+        0xFFFFF0EE,
+        0xFFF28B7D,
+        0xFF2E120E,
+        isDark = false
+    ),
+    PASTEL_MINT_GELATO(
+        "pastel_mint_gelato",
+        "Mint Gelato",
+        "Refreshing glacier mint pastel with deep emerald contrast",
+        0xFFEAFBF6,
+        0xFF5CC8AE,
+        0xFF0B2620,
+        isDark = false
+    ),
+    PASTEL_ROSEWATER(
+        "pastel_rosewater",
+        "Rosewater",
+        "Velvet rosewater cream with rich burgundy-plum ink",
+        0xFFFCF0F4,
+        0xFFD9829E,
+        0xFF2A0F19,
+        isDark = false
+    ),
+    PASTEL_HONEYDEW(
+        "pastel_honeydew",
+        "Honeydew",
+        "Crisp botanical honeydew melon with deep pine contrast",
+        0xFFF2FAEC,
+        0xFF8CC96E,
+        0xFF16280E,
+        isDark = false
+    ),
+    PASTEL_PERIWINKLE(
+        "pastel_periwinkle",
+        "Periwinkle",
+        "Soft cornflower periwinkle with midnight slate ink",
+        0xFFEEF1FF,
+        0xFF8496E8,
+        0xFF121836,
+        isDark = false
+    ),
+    PASTEL_CHAMOMILE(
+        "pastel_chamomile",
+        "Chamomile",
+        "Warm oat chamomile with rich roasted walnut contrast",
+        0xFFFCF7E8,
+        0xFFD6AC5C,
+        0xFF261C08,
+        isDark = false
+    ),
     PAPER_SAGE(
         "paper_sage",
         "Paper Sage",
@@ -419,6 +504,24 @@ enum class AppThemeOption(
         0xFF291A14,
         isDark = false
     ),
+    FUJI_SILVER(
+        "fuji_silver",
+        "Silver Halide",
+        "Anodized brushed silver camera body with obsidian ink",
+        0xFFF2F4F3,
+        0xFF5E756C,
+        0xFF121A17,
+        isDark = false
+    ),
+    NORDIC_SNOW(
+        "nordic_snow",
+        "Nordic Snow",
+        "Pure minimalist glacier white with cobalt-slate accents",
+        0xFFF7FAFC,
+        0xFF4A7C9B,
+        0xFF0F1E29,
+        isDark = false
+    ),
     GRAPHITE(
         "graphite",
         "Graphite Pro",
@@ -435,6 +538,33 @@ enum class AppThemeOption(
         0xFF0B0F0E,
         0xFF7AB39B,
         0xFFFAFCFB,
+        isDark = true
+    ),
+    LEICA_BRASS(
+        "leica_brass",
+        "Rangefinder Brass",
+        "Matte black anodized chassis with warm Leica brass gold",
+        0xFF12110E,
+        0xFFD8A84E,
+        0xFFFAF6EE,
+        isDark = true
+    ),
+    TOKYO_NEON(
+        "tokyo_neon",
+        "Tokyo Cyber",
+        "Night obsidian with electric cyan-emerald rangefinder glow",
+        0xFF0A1014,
+        0xFF4AD6B8,
+        0xFFF2FBF9,
+        isDark = true
+    ),
+    ESPRESSO_CLUB(
+        "espresso_club",
+        "Espresso Dark",
+        "Rich dark roasted espresso with warm cream typography",
+        0xFF18120F,
+        0xFFD4956A,
+        0xFFFAF3EE,
         isDark = true
     ),
     SYSTEM(
@@ -496,13 +626,35 @@ data class EditRecipe(
 )
 
 @Immutable
+data class ProOpticalState(
+    val isAutoIso: Boolean = true,
+    val manualIso: Int = 100,
+    val isAutoShutter: Boolean = true,
+    val shutterDenominator: Int = 250,
+    val exposureEv: Float = 0f,
+    val whiteBalance: WhiteBalancePreset = WhiteBalancePreset.AUTO,
+    val manualKelvin: Int = 5500,
+    val colorProfile: ColorProfileOption = ColorProfileOption.STANDARD,
+    val zoomRatio: Float = 1.0f,
+    val hardwareOpticalMaxZoom: Float = 8.0f,
+    val extraHybridZoom: Float = 1.0f
+)
+
+@Immutable
 data class HardwareCapabilities(
     val activeCameraId: String = "0",
     val hardwareLevelLabel: String = "LIMITED",
     val focalLengthMm: Float = 4.2f,
     val apertureF: Float = 1.8f,
-    val maxPhotoWidth: Int = 4032,
-    val maxPhotoHeight: Int = 3024,
+    val maxPhotoWidth: Int = 8192,
+    val maxPhotoHeight: Int = 6144,
+    val nativeSensorMegapixels: Int = 50,
+    val supportedMegapixels: List<PhotoMegapixelOption> = listOf(
+        PhotoMegapixelOption.MP_12,
+        PhotoMegapixelOption.MP_24,
+        PhotoMegapixelOption.MP_48,
+        PhotoMegapixelOption.MP_50
+    ),
     val hasBackCamera: Boolean = true,
     val hasFrontCamera: Boolean = true,
     val hasFlashUnit: Boolean = false,
@@ -516,12 +668,13 @@ data class HardwareCapabilities(
         StabilizationMode.STANDARD,
         StabilizationMode.OFF
     ),
-    val isoRange: IntRange = 100..1600,
+    val isoRange: IntRange = 100..6400,
     val exposureTimeRangeNs: LongRange = 1_000_000L..500_000_000L,
     val evRange: ClosedFloatingPointRange<Float> = -2.0f..2.0f,
-    val zoomStops: List<Float> = listOf(1.0f, 2.0f),
+    val zoomStops: List<Float> = listOf(1.0f, 2.0f, 5.0f, 10.0f, 30.0f, 100.0f),
     val minZoom: Float = 1.0f,
-    val maxZoom: Float = 4.0f,
+    val hardwareOpticalMaxZoom: Float = 8.0f,
+    val maxZoom: Float = 100.0f,
     val supportedVideoResolutions: List<VideoResolution> = listOf(
         VideoResolution.HD_720P,
         VideoResolution.FHD_1080P
@@ -556,7 +709,7 @@ data class HardwareCapabilities(
     val thermalStatusLabel: String = "Nominal"
 ) {
     fun validFpsFor(resolution: VideoResolution, codec: VideoCodecOption): List<VideoFps> {
-        val base = supportedFpsChoices.ifEmpty { listOf(VideoFps.FPS_24, VideoFps.FPS_30) }
+        val base = supportedFpsChoices.ifEmpty { listOf(VideoFps.FPS_24, VideoFps.FPS_30, VideoFps.FPS_60) }
         return when (resolution) {
             VideoResolution.UHD_4K, VideoResolution.DCI_4K, VideoResolution.UHD_8K ->
                 base.filter { it.fps <= 60 }.ifEmpty { listOf(VideoFps.FPS_30) }

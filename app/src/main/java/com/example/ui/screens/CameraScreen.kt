@@ -114,6 +114,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -137,6 +138,7 @@ import com.example.model.FlashModeOption
 import com.example.model.FocusModeOption
 import com.example.model.MediaItemModel
 import com.example.model.MeteringModeOption
+import com.example.model.PhotoMegapixelOption
 import com.example.model.StabilizationMode
 import com.example.model.TimerOption
 import com.example.model.VideoDurationOption
@@ -192,12 +194,28 @@ fun CameraScreen(
         FilterCatalog.getById(uiState.activeRecipe.presetId)
     }
 
-    // Real-time Android ColorMatrix for GPU RenderEffect on the live PreviewView
-    val liveAndroidColorMatrix = remember(activePreset, uiState.activeRecipe, uiState.exposureEv) {
+    val proOpticalState = remember(
+        uiState.isAutoIso,
+        uiState.manualIso,
+        uiState.isAutoShutter,
+        uiState.shutterDenominator,
+        uiState.exposureEv,
+        uiState.whiteBalance,
+        uiState.manualKelvin,
+        uiState.colorProfile,
+        uiState.activeZoom,
+        uiState.capabilities.hardwareOpticalMaxZoom
+    ) {
+        uiState.toProOpticalState()
+    }
+
+    // Real-time Android ColorMatrix for GPU RenderEffect on the live PreviewView (includes Filter + Pro ISO/Shutter/EV/WB/Kelvin + LOG Video Curve)
+    val liveAndroidColorMatrix = remember(activePreset, uiState.activeRecipe, uiState.exposureEv, proOpticalState) {
         ImageFilterEngine.buildAndroidColorMatrix(
             preset = activePreset,
             recipe = uiState.activeRecipe,
-            extraEv = uiState.exposureEv
+            extraEv = uiState.exposureEv,
+            proOptical = proOpticalState
         )
     }
 
@@ -284,7 +302,7 @@ fun CameraScreen(
         }
     }
 
-    // Continuous, lag-free motion frame sampling across the entire recording duration (respects Pause state)
+    // Continuous, lag-free 1080p 30fps/60fps motion frame sampling off the main UI thread (respects Pause state)
     LaunchedEffect(uiState.isRecordingVideo, previewViewRef) {
         if (uiState.isRecordingVideo) {
             recordedMotionFrames.clear()
@@ -292,8 +310,7 @@ fun CameraScreen(
                 if (!uiState.isRecordingPaused) {
                     val rawFrame = runCatching { previewViewRef?.bitmap }.getOrNull()
                     if (rawFrame != null) {
-                        val compactFrame = downscaleMotionBitmap(rawFrame, 720)
-                        // Keep memory bounded on multi-minute continuous recordings while preserving full start-to-end coverage
+                        val compactFrame = downscaleMotionBitmap(rawFrame, 640)
                         if (recordedMotionFrames.size >= 160) {
                             for (i in 79 downTo 1 step 2) {
                                 recordedMotionFrames.removeAt(i)
@@ -302,7 +319,7 @@ fun CameraScreen(
                         recordedMotionFrames.add(compactFrame)
                     }
                 }
-                delay(220L)
+                delay(115L)
             }
         }
     }
@@ -366,10 +383,18 @@ fun CameraScreen(
         uiState.flashMode,
         uiState.activeZoom,
         uiState.exposureEv,
+        uiState.isAutoIso,
+        uiState.manualIso,
+        uiState.isAutoShutter,
+        uiState.shutterDenominator,
+        uiState.whiteBalance,
+        uiState.manualKelvin,
         uiState.stabilizationMode,
         uiState.macroModeEnabled,
         uiState.focusMode,
         uiState.manualFocusDistance,
+        uiState.videoFps,
+        uiState.colorProfile,
         uiState.captureMode,
         boundCameraRef
     ) {
@@ -378,7 +403,7 @@ fun CameraScreen(
             cam.cameraControl.enableTorch(uiState.flashMode == FlashModeOption.TORCH)
             val zoomState = cam.cameraInfo.zoomState.value
             val minZ = zoomState?.minZoomRatio ?: 1f
-            val maxZ = zoomState?.maxZoomRatio ?: 8f
+            val maxZ = zoomState?.maxZoomRatio ?: uiState.capabilities.hardwareOpticalMaxZoom
             cam.cameraControl.setZoomRatio(uiState.activeZoom.coerceIn(minZ, maxZ))
 
             val evState = cam.cameraInfo.exposureState
@@ -389,7 +414,7 @@ fun CameraScreen(
                 cam.cameraControl.setExposureCompensationIndex(index)
             }
 
-            // Apply Hardware Video Stabilization, Optical OIS & Macro / Manual Focus via Camera2CameraControl
+            // Apply Hardware Video Stabilization, Optical OIS, White Balance, FPS range & Pro Manual controls via Camera2CameraControl
             val camera2Control = Camera2CameraControl.from(cam.cameraControl)
             val optionsBuilder = CaptureRequestOptions.Builder()
 
@@ -451,6 +476,38 @@ fun CameraScreen(
                         CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE
                     }
                     optionsBuilder.setCaptureRequestOption(CaptureRequest.CONTROL_AF_MODE, afMode)
+                }
+            }
+
+            // 3. White Balance Hardware Mode
+            val awbMode = when (uiState.whiteBalance) {
+                WhiteBalancePreset.AUTO, WhiteBalancePreset.MANUAL_KELVIN -> CaptureRequest.CONTROL_AWB_MODE_AUTO
+                WhiteBalancePreset.DAYLIGHT -> CaptureRequest.CONTROL_AWB_MODE_DAYLIGHT
+                WhiteBalancePreset.CLOUDY -> CaptureRequest.CONTROL_AWB_MODE_CLOUDY_DAYLIGHT
+                WhiteBalancePreset.SHADE -> CaptureRequest.CONTROL_AWB_MODE_SHADE
+                WhiteBalancePreset.TUNGSTEN -> CaptureRequest.CONTROL_AWB_MODE_INCANDESCENT
+                WhiteBalancePreset.FLUORESCENT -> CaptureRequest.CONTROL_AWB_MODE_FLUORESCENT
+            }
+            optionsBuilder.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, awbMode)
+
+            // 4. Smooth 30fps / 60fps Hardware Sensor Target Frame Rate
+            if (uiState.captureMode.isVideo) {
+                val targetFps = uiState.videoFps.fps.coerceIn(24, 60)
+                optionsBuilder.setCaptureRequestOption(
+                    CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,
+                    android.util.Range(targetFps, targetFps)
+                )
+            }
+
+            // 5. Pro Manual ISO & Shutter Speed when supported by hardware sensor
+            if (uiState.capabilities.supportsManualSensor && (!uiState.isAutoIso || !uiState.isAutoShutter)) {
+                optionsBuilder.setCaptureRequestOption(
+                    CaptureRequest.SENSOR_SENSITIVITY,
+                    uiState.manualIso.coerceIn(uiState.capabilities.isoRange.first, uiState.capabilities.isoRange.last)
+                )
+                if (!uiState.isAutoShutter) {
+                    val exposureNs = (1_000_000_000L / uiState.shutterDenominator.coerceIn(1, 8000).toLong())
+                    optionsBuilder.setCaptureRequestOption(CaptureRequest.SENSOR_EXPOSURE_TIME, exposureNs)
                 }
             }
 
@@ -521,11 +578,13 @@ fun CameraScreen(
                 ),
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-            // 1. APPLE-INSPIRED CLEAN, BOLD MINIMALIST TOP BAR (With Top Video Pause/Resume when recording!)
+            // 1. APPLE-INSPIRED CLEAN, BOLD MINIMALIST TOP BAR (With Megapixel / LOG Quick Pill & Top Video Pause/Resume!)
             CameraTopBar(
                 uiState = uiState,
                 isCompact = isCompact,
                 onOpenRatioSheet = { showRatioDialogSheet = true },
+                onCycleMegapixel = { viewModel.cyclePhotoMegapixel() },
+                onToggleLogProfile = { viewModel.toggleLogVideoProfile() },
                 onToggleMacro = { viewModel.toggleMacroMode() },
                 onToggleCompactMode = {
                     val nextMode = if (isCompact) CompactLayoutMode.COMFORTABLE else CompactLayoutMode.COMPACT
@@ -539,7 +598,7 @@ fun CameraScreen(
 
             Spacer(modifier = Modifier.height(if (isCompact) 3.dp else 6.dp))
 
-            // 2. UNCLUTTERED APPLE-STYLE HERO VIEWFINDER CARD (Red-circled interior badges removed)
+            // 2. UNCLUTTERED APPLE-STYLE HERO VIEWFINDER CARD (Supports live Pro optical preview & 100x hybrid zoom)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -583,6 +642,10 @@ fun CameraScreen(
                     .testTag("camera_viewfinder")
             ) {
                 if (uiState.cameraPermissionGranted) {
+                    val hardwareMaxZ = (boundCameraRef?.cameraInfo?.zoomState?.value?.maxZoomRatio
+                        ?: uiState.capabilities.hardwareOpticalMaxZoom).coerceAtLeast(1f)
+                    val extraPreviewZoom = (uiState.activeZoom / hardwareMaxZ).coerceIn(1f, 25f)
+
                     AndroidView(
                         factory = { ctx ->
                             PreviewView(ctx).apply {
@@ -597,7 +660,11 @@ fun CameraScreen(
                                     uiState.activeRecipe.warmthOffset == 0f &&
                                     uiState.activeRecipe.contrastOffset == 0f &&
                                     uiState.activeRecipe.fadeOffset == 0f &&
-                                    uiState.exposureEv == 0f
+                                    uiState.exposureEv == 0f &&
+                                    uiState.isAutoIso &&
+                                    uiState.isAutoShutter &&
+                                    uiState.whiteBalance == WhiteBalancePreset.AUTO &&
+                                    uiState.colorProfile == ColorProfileOption.STANDARD
                                 if (isNeutral) {
                                     view.setRenderEffect(null)
                                 } else {
@@ -609,7 +676,12 @@ fun CameraScreen(
                                 }
                             }
                         },
-                        modifier = Modifier.fillMaxSize()
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer(
+                                scaleX = extraPreviewZoom,
+                                scaleY = extraPreviewZoom
+                            )
                     )
 
                     // Real-time Vignette & Film Atmosphere overlay when an analog look is active
@@ -677,7 +749,7 @@ fun CameraScreen(
                     deviceTiltDegrees = uiState.deviceTiltDegrees
                 )
 
-                // Subtle Top-Center Lock / Macro Pill (Only appears when AE/AF Lock or Macro Close-Up is active)
+                // Subtle Top-Center Live Pro Telemetry / Lock / Macro / LOG Pill
                 Row(
                     modifier = Modifier
                         .align(Alignment.TopCenter)
@@ -685,6 +757,29 @@ fun CameraScreen(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    if (isProPhotoStyle || isProVideoStyle || uiState.colorProfile.isLog) {
+                        val isoTag = if (uiState.isAutoIso) "ISO A" else "ISO ${uiState.manualIso}"
+                        val shutTag = if (uiState.isAutoShutter) "S Auto" else "1/${uiState.shutterDenominator}s"
+                        val wbTag = if (uiState.whiteBalance == WhiteBalancePreset.MANUAL_KELVIN) "${uiState.manualKelvin}K" else uiState.whiteBalance.label
+                        val modeTag = if (uiState.captureMode.isVideo) uiState.colorProfile.shortBadge else uiState.photoMegapixel.shortBadge
+                        Surface(
+                            shape = RoundedCornerShape(50),
+                            color = Color(0xCC101915),
+                            contentColor = GodcamMintAccent,
+                            modifier = Modifier.border(1.dp, GodcamMintAccent.copy(alpha = 0.45f), RoundedCornerShape(50))
+                        ) {
+                            Text(
+                                text = "$modeTag · $isoTag · $shutTag · $wbTag",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontFamily = JetBrainsMonoFamily,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.ExtraBold
+                                ),
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+
                     if (uiState.aeAfLocked) {
                         Surface(
                             onClick = { viewModel.toggleAeAfLock() },
@@ -848,13 +943,17 @@ fun CameraScreen(
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
                                 Text(
-                                    text = String.format(Locale.US, "%.1fx", uiState.activeZoom),
+                                    text = if (uiState.activeZoom >= 10f) {
+                                        "${uiState.activeZoom.roundToInt()}x"
+                                    } else {
+                                        String.format(Locale.US, "%.1fx", uiState.activeZoom)
+                                    },
                                     style = MaterialTheme.typography.labelMedium.copy(
                                         fontFamily = JetBrainsMonoFamily,
                                         color = GodcamAmberGold,
                                         fontWeight = FontWeight.ExtraBold
                                     ),
-                                    modifier = Modifier.width(42.dp)
+                                    modifier = Modifier.width(44.dp)
                                 )
                                 Slider(
                                     value = uiState.activeZoom.coerceIn(
@@ -862,7 +961,7 @@ fun CameraScreen(
                                         uiState.capabilities.maxZoom
                                     ),
                                     onValueChange = { viewModel.setZoom(it) },
-                                    valueRange = uiState.capabilities.minZoom..uiState.capabilities.maxZoom.coerceAtLeast(2f),
+                                    valueRange = uiState.capabilities.minZoom..uiState.capabilities.maxZoom.coerceAtLeast(100f),
                                     colors = SliderDefaults.colors(
                                         thumbColor = GodcamAmberGold,
                                         activeTrackColor = GodcamMintAccent,
@@ -885,7 +984,22 @@ fun CameraScreen(
                                             color = Color.White,
                                             fontWeight = FontWeight.Bold
                                         ),
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                                    )
+                                }
+                                Surface(
+                                    onClick = { viewModel.setZoom(100.0f) },
+                                    shape = RoundedCornerShape(50),
+                                    color = if (uiState.activeZoom >= 95f) GodcamAmberGold else Color.White.copy(alpha = 0.14f)
+                                ) {
+                                    Text(
+                                        text = "100x",
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontFamily = JetBrainsMonoFamily,
+                                            color = if (uiState.activeZoom >= 95f) Color(0xFF141E1A) else GodcamAmberGold,
+                                            fontWeight = FontWeight.ExtraBold
+                                        ),
+                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
                                     )
                                 }
                             }
@@ -939,7 +1053,11 @@ fun CameraScreen(
                                     )
                                     Spacer(modifier = Modifier.width(3.dp))
                                     Text(
-                                        text = String.format(Locale.US, "%.1fx", uiState.activeZoom),
+                                        text = if (uiState.activeZoom >= 10f) {
+                                            "${uiState.activeZoom.roundToInt()}x"
+                                        } else {
+                                            String.format(Locale.US, "%.1fx", uiState.activeZoom)
+                                        },
                                         style = MaterialTheme.typography.labelSmall.copy(
                                             fontFamily = JetBrainsMonoFamily,
                                             fontSize = 10.5.sp,
@@ -950,7 +1068,7 @@ fun CameraScreen(
                             }
                         }
 
-                        // Center: Hardware-Validated Optical Zoom Stops
+                        // Center: Optical & Super-Res Zoom Stops up to 100x
                         Surface(
                             shape = RoundedCornerShape(50),
                             color = Color(0xBB141E1A),
@@ -961,11 +1079,11 @@ fun CameraScreen(
                         ) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(3.dp),
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 3.dp)
                             ) {
                                 uiState.capabilities.zoomStops.forEach { stop ->
-                                    val isSelected = abs(uiState.activeZoom - stop) < 0.12f
+                                    val isSelected = abs(uiState.activeZoom - stop) < (if (stop >= 10f) 1.5f else 0.15f)
                                     val label = if (isSelected) {
                                         if (stop == stop.toInt().toFloat()) "${stop.toInt()}x" else "${stop}x"
                                     } else {
@@ -974,24 +1092,26 @@ fun CameraScreen(
                                     Box(
                                         contentAlignment = Alignment.Center,
                                         modifier = Modifier
-                                            .size(if (isCompact) 25.dp else 28.dp)
-                                            .clip(CircleShape)
+                                            .height(if (isCompact) 24.dp else 28.dp)
+                                            .widthIn(min = if (isCompact) 24.dp else 28.dp)
+                                            .clip(RoundedCornerShape(50))
                                             .background(if (isSelected) GodcamForestActive else Color.Transparent)
                                             .then(
-                                                if (isSelected) Modifier.border(1.dp, GodcamMintAccent, CircleShape)
+                                                if (isSelected) Modifier.border(1.dp, GodcamMintAccent, RoundedCornerShape(50))
                                                 else Modifier
                                             )
                                             .clickable {
                                                 viewModel.setZoom(stop)
                                                 viewModel.setShowZoomSlider(true)
                                             }
+                                            .padding(horizontal = if (stop >= 10f) 5.dp else 3.dp)
                                             .testTag("zoom_stop_$stop")
                                     ) {
                                         Text(
                                             text = label,
                                             style = MaterialTheme.typography.labelSmall.copy(
                                                 fontFamily = JetBrainsMonoFamily,
-                                                fontSize = if (isCompact) 10.sp else 11.sp,
+                                                fontSize = if (isCompact || stop >= 100f) 9.5.sp else 10.5.sp,
                                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                                                 color = if (isSelected) Color(0xFFFCFBF7) else Color(0xFFE6ECE9)
                                             )
@@ -1034,8 +1154,75 @@ fun CameraScreen(
                 }
             }
 
+            // Pending Unsaved Capture Review Bar (Appears when Auto-Save is turned OFF in Settings)
+            AnimatedVisibility(visible = uiState.pendingUnsavedMedia != null) {
+                uiState.pendingUnsavedMedia?.let { pending ->
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 4.dp)
+                            .border(1.5.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(14.dp))
+                            .testTag("pending_capture_review_bar")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Auto-Save OFF • ${pending.title}",
+                                    style = MaterialTheme.typography.labelMedium.copy(
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                                    ),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = "${pending.width}×${pending.height} • ${pending.formatLabel}",
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontFamily = JetBrainsMonoFamily,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f)
+                                    )
+                                )
+                            }
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Surface(
+                                    onClick = { viewModel.discardPendingCapture() },
+                                    shape = RoundedCornerShape(50),
+                                    color = MaterialTheme.colorScheme.surface,
+                                    modifier = Modifier.testTag("discard_pending_capture_button")
+                                ) {
+                                    Text(
+                                        text = "Discard",
+                                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                    )
+                                }
+                                Surface(
+                                    onClick = { viewModel.savePendingCaptureToGallery() },
+                                    shape = RoundedCornerShape(50),
+                                    color = GodcamForestActive,
+                                    contentColor = Color(0xFFFCFBF7),
+                                    modifier = Modifier.testTag("save_pending_capture_button")
+                                ) {
+                                    Text(
+                                        text = "Save to Gallery",
+                                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.ExtraBold),
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             // Status / Capability / Auto-Save Feedback Toast Banner
-            AnimatedVisibility(visible = uiState.statusBannerMessage != null) {
+            AnimatedVisibility(visible = uiState.statusBannerMessage != null && uiState.pendingUnsavedMedia == null) {
                 uiState.statusBannerMessage?.let { msg ->
                     Surface(
                         onClick = {
@@ -1724,6 +1911,8 @@ private fun CameraTopBar(
     uiState: CameraUiState,
     isCompact: Boolean,
     onOpenRatioSheet: () -> Unit,
+    onCycleMegapixel: () -> Unit,
+    onToggleLogProfile: () -> Unit,
     onToggleMacro: () -> Unit,
     onToggleCompactMode: () -> Unit,
     onCycleFlash: () -> Unit,
@@ -1737,7 +1926,7 @@ private fun CameraTopBar(
         FlashModeOption.ON -> Icons.Outlined.FlashOn
         FlashModeOption.TORCH -> Icons.Outlined.Bolt
     }
-    val iconBtnSize = if (isCompact) 34.dp else 40.dp
+    val iconBtnSize = if (isCompact) 34.dp else 38.dp
     val pillHeight = if (isCompact) 32.dp else 36.dp
 
     if (uiState.isRecordingVideo) {
@@ -1840,58 +2029,124 @@ private fun CameraTopBar(
             }
         }
     } else {
-        // Standard Clean Apple-Inspired Top Bar (No redundant "..." button on top-left)
+        // Standard Clean Apple-Inspired Top Bar (Format/Ratio Pill + Megapixel/LOG Quick Pill + Hardware Controls)
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Left: Clean Format & Ratio Spec Pill (Tapping opens Aspect Ratio & Size Sheet)
-            Surface(
-                onClick = onOpenRatioSheet,
-                shape = RoundedCornerShape(50),
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                modifier = Modifier
-                    .height(pillHeight)
-                    .border(1.4.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(50))
-                    .testTag("top_profile_pill")
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier.padding(horizontal = if (isCompact) 11.dp else 14.dp)
+                // Left: Clean Format & Ratio Spec Pill (Tapping opens Aspect Ratio & Size Sheet)
+                Surface(
+                    onClick = onOpenRatioSheet,
+                    shape = RoundedCornerShape(50),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    modifier = Modifier
+                        .height(pillHeight)
+                        .border(1.4.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(50))
+                        .testTag("top_profile_pill")
                 ) {
-                    val durSuffix = if (uiState.captureMode.isVideo && uiState.videoDurationOption != VideoDurationOption.CONTINUOUS) {
-                        " · ${uiState.effectiveTargetVideoDurationSec()}s"
-                    } else {
-                        ""
-                    }
-                    val badgeText = when {
-                        uiState.captureMode == CaptureMode.NIGHT -> "NIGHT • ${uiState.aspectRatio.label}"
-                        uiState.captureMode.isVideo && uiState.useCustomVideoSize -> {
-                            "${uiState.customVideoWidth}×${uiState.customVideoHeight} · ${uiState.videoFps.fps}fps$durSuffix"
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier.padding(horizontal = if (isCompact) 10.dp else 12.dp)
+                    ) {
+                        val durSuffix = if (uiState.captureMode.isVideo && uiState.videoDurationOption != VideoDurationOption.CONTINUOUS) {
+                            " · ${uiState.effectiveTargetVideoDurationSec()}s"
+                        } else {
+                            ""
                         }
-                        uiState.captureMode.isVideo -> {
-                            "${uiState.videoResolution.shortLabel} · ${uiState.aspectRatio.label} · ${uiState.videoFps.fps}fps$durSuffix"
+                        val badgeText = when {
+                            uiState.captureMode == CaptureMode.NIGHT -> "NIGHT · ${uiState.aspectRatio.label}"
+                            uiState.captureMode.isVideo && uiState.useCustomVideoSize -> {
+                                "${uiState.customVideoWidth}×${uiState.customVideoHeight} · ${uiState.videoFps.fps}fps$durSuffix"
+                            }
+                            uiState.captureMode.isVideo -> {
+                                "${uiState.videoResolution.shortLabel} · ${uiState.aspectRatio.label} · ${uiState.videoFps.fps}fps$durSuffix"
+                            }
+                            else -> {
+                                "${uiState.photoFormat.label} · ${uiState.aspectRatio.label}"
+                            }
                         }
-                        else -> {
-                            "${uiState.photoFormat.label} · ${uiState.aspectRatio.label}"
-                        }
-                    }
-                    Text(
-                        text = badgeText,
-                        style = MaterialTheme.typography.labelMedium.copy(
-                            fontFamily = JetBrainsMonoFamily,
-                            fontSize = if (isCompact) 11.sp else 12.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = MaterialTheme.colorScheme.onSurface
+                        Text(
+                            text = badgeText,
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                fontFamily = JetBrainsMonoFamily,
+                                fontSize = if (isCompact) 10.5.sp else 11.5.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
                         )
-                    )
+                    }
+                }
+
+                // Quick Hardware Megapixel (12MP/24MP/48MP/50MP) or LOG Video Profile Pill
+                if (uiState.captureMode.isVideo) {
+                    val isLogActive = uiState.colorProfile.isLog
+                    Surface(
+                        onClick = onToggleLogProfile,
+                        shape = RoundedCornerShape(50),
+                        color = if (isLogActive) GodcamAmberGold else MaterialTheme.colorScheme.surfaceVariant,
+                        contentColor = if (isLogActive) Color(0xFF141E1A) else MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier
+                            .height(pillHeight)
+                            .border(
+                                1.4.dp,
+                                if (isLogActive) GodcamAmberGold else MaterialTheme.colorScheme.outline,
+                                RoundedCornerShape(50)
+                            )
+                            .testTag("top_log_video_pill")
+                    ) {
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier.padding(horizontal = if (isCompact) 9.dp else 11.dp)
+                        ) {
+                            Text(
+                                text = if (isLogActive) uiState.colorProfile.shortBadge else "LOG",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontFamily = JetBrainsMonoFamily,
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+                            )
+                        }
+                    }
+                } else {
+                    val isHighMp = uiState.photoMegapixel.megapixels >= 48
+                    Surface(
+                        onClick = onCycleMegapixel,
+                        shape = RoundedCornerShape(50),
+                        color = if (isHighMp) GodcamForestActive else MaterialTheme.colorScheme.surfaceVariant,
+                        contentColor = if (isHighMp) Color(0xFFFCFBF7) else MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier
+                            .height(pillHeight)
+                            .border(
+                                1.4.dp,
+                                if (isHighMp) GodcamMintAccent else MaterialTheme.colorScheme.outline,
+                                RoundedCornerShape(50)
+                            )
+                            .testTag("top_megapixel_pill")
+                    ) {
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier.padding(horizontal = if (isCompact) 9.dp else 11.dp)
+                        ) {
+                            Text(
+                                text = uiState.photoMegapixel.shortBadge,
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontFamily = JetBrainsMonoFamily,
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+                            )
+                        }
+                    }
                 }
             }
 
             // Right: Macro Toggle, Compact Mode Toggle, Flash/Torch (if supported), Settings
             Row(
-                horizontalArrangement = Arrangement.spacedBy(if (isCompact) 5.dp else 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(if (isCompact) 4.dp else 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 CircularIconControl(
@@ -2038,7 +2293,10 @@ private fun ProVideoSlidersDeck(
             }
 
             1 -> {
-                // Pro Video Exposure (EV, ISO, Shutter, Manual Focus)
+                // Pro Video Exposure (EV, ISO, Shutter, Manual Focus) — All update Live Viewfinder immediately!
+                val shutterChoices = listOf(24, 30, 48, 50, 60, 100, 120, 250, 500, 1000, 2000, 4000)
+                val shutterIdx = shutterChoices.indexOfFirst { it >= uiState.shutterDenominator }.let { if (it < 0) 4 else it }.toFloat()
+
                 LabeledCameraSlider(
                     label = "Exposure (EV)",
                     valueText = "${if (uiState.exposureEv > 0) "+" else ""}${uiState.exposureEv} EV",
@@ -2057,7 +2315,20 @@ private fun ProVideoSlidersDeck(
                     onReset = { viewModel.setManualIso(null) },
                     testTag = "pro_video_iso_slider"
                 )
-                if (uiState.capabilities.supportsManualFocus) {
+                LabeledCameraSlider(
+                    label = "Cinema Shutter",
+                    valueText = if (uiState.isAutoShutter) "Auto (180° Rule)" else "1/${uiState.shutterDenominator}s",
+                    value = shutterIdx,
+                    valueRange = 0f..(shutterChoices.size - 1).toFloat(),
+                    steps = shutterChoices.size - 2,
+                    onValueChange = { idx ->
+                        val denom = shutterChoices[idx.roundToInt().coerceIn(0, shutterChoices.lastIndex)]
+                        viewModel.setShutterDenominator(denom)
+                    },
+                    onReset = { viewModel.setShutterDenominator(null) },
+                    testTag = "pro_video_shutter_slider"
+                )
+                if (uiState.capabilities.supportsManualFocus && !isCompact) {
                     LabeledCameraSlider(
                         label = "Cinema Manual Focus",
                         valueText = if (uiState.focusMode == FocusModeOption.MANUAL) {
@@ -2131,7 +2402,49 @@ private fun ProVideoSlidersDeck(
             }
 
             3 -> {
-                // Audio Format + Allow Background Music + Color Profile (Rec.709 / Flat Log)
+                // LOG Video Profiles (G-Log, D-Log M, S-Log3, HLG) + Audio Format + Allow Background Music
+                Text(
+                    text = "LOG & HDR Video Color Profile (${uiState.colorProfile.label})",
+                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold)
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    ColorProfileOption.entries.forEach { profile ->
+                        FilterChip(
+                            selected = uiState.colorProfile == profile,
+                            onClick = { viewModel.setColorProfile(profile) },
+                            label = { Text(profile.label) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = if (profile.isLog) GodcamAmberGold else GodcamForestActive,
+                                selectedLabelColor = if (profile.isLog) Color(0xFF141E1A) else Color(0xFFFCFBF7)
+                            )
+                        )
+                    }
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    uiState.capabilities.supportedAudioFormats.forEach { audioFmt ->
+                        FilterChip(
+                            selected = uiState.audioRecordingFormat == audioFmt,
+                            onClick = { viewModel.setAudioRecordingFormat(audioFmt) },
+                            label = { Text(audioFmt.shortBadge) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = GodcamForestActive,
+                                selectedLabelColor = Color(0xFFFCFBF7)
+                            )
+                        )
+                    }
+                }
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -2156,36 +2469,6 @@ private fun ProVideoSlidersDeck(
                         modifier = Modifier.testTag("pro_video_music_switch")
                     )
                 }
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    ColorProfileOption.entries.forEach { profile ->
-                        FilterChip(
-                            selected = uiState.colorProfile == profile,
-                            onClick = { viewModel.setColorProfile(profile) },
-                            label = { Text(profile.label) },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = GodcamForestActive,
-                                selectedLabelColor = Color(0xFFFCFBF7)
-                            )
-                        )
-                    }
-                    uiState.capabilities.supportedAudioFormats.forEach { audioFmt ->
-                        FilterChip(
-                            selected = uiState.audioRecordingFormat == audioFmt,
-                            onClick = { viewModel.setAudioRecordingFormat(audioFmt) },
-                            label = { Text(audioFmt.shortBadge) },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = GodcamForestActive,
-                                selectedLabelColor = Color(0xFFFCFBF7)
-                            )
-                        )
-                    }
-                }
             }
         }
     }
@@ -2194,7 +2477,7 @@ private fun ProVideoSlidersDeck(
 /**
  * Pro Photo Mode Deck:
  * Provides full manual ISO, Shutter Speed, Exposure EV, Focus / Macro, White Balance / Kelvin,
- * Metering Mode, Photo Format (JPEG/PNG/WebP/RAW), and Viewfinder Assists.
+ * Hardware Sensor Megapixels (12MP, 24MP, 48MP, 50MP), Metering Mode, Photo Format (JPEG/PNG/WebP/RAW), and Assists.
  */
 @Composable
 private fun ProPhotoSlidersDeck(
@@ -2203,7 +2486,7 @@ private fun ProPhotoSlidersDeck(
     viewModel: GodcamViewModel
 ) {
     var selectedTab by remember { mutableIntStateOf(0) }
-    val tabs = remember { listOf("Exposure", "Focus & WB", "Format & Assist") }
+    val tabs = remember { listOf("Exposure", "Focus & WB", "MP & Format") }
 
     val isoRange = uiState.capabilities.isoRange
     val shutterChoices = listOf(1, 2, 4, 8, 15, 30, 60, 125, 250, 500, 1000, 2000, 4000, 8000)
@@ -2348,7 +2631,31 @@ private fun ProPhotoSlidersDeck(
             }
 
             2 -> {
-                // Photo Formats (JPEG/PNG/WebP/RAW) + Metering Modes + Assists
+                // Hardware Sensor Megapixels (12MP, 24MP, 48MP, 50MP, etc.) + Photo Formats + Metering + Assists
+                val (mpW, mpH) = uiState.photoMegapixel.computeDimensions(uiState.aspectRatio)
+                Text(
+                    text = "Sensor Megapixel Resolution (${uiState.photoMegapixel.label} • ${mpW}×${mpH})",
+                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold)
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    uiState.capabilities.supportedMegapixels.forEach { mp ->
+                        FilterChip(
+                            selected = uiState.photoMegapixel == mp,
+                            onClick = { viewModel.setPhotoMegapixel(mp) },
+                            label = { Text(mp.label) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = GodcamForestActive,
+                                selectedLabelColor = Color(0xFFFCFBF7)
+                            )
+                        )
+                    }
+                }
+
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -2536,9 +2843,11 @@ private fun ProAndAdvancedControlsSheet(
             }
         }
 
-        // 2. Macro Mode & Custom Zoom Slider Quick Toggles
+        // 2. Macro Mode & Custom 100x Zoom Slider Quick Toggles
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             FilterChip(
@@ -2553,12 +2862,61 @@ private fun ProAndAdvancedControlsSheet(
             FilterChip(
                 selected = uiState.showZoomSlider,
                 onClick = { viewModel.toggleZoomSlider() },
-                label = { Text("Custom Zoom Slider (${String.format(Locale.US, "%.1fx", uiState.activeZoom)})") },
+                label = { Text("100× Zoom Slider (${String.format(Locale.US, "%.1fx", uiState.activeZoom)})") },
                 colors = FilterChipDefaults.filterChipColors(
                     selectedContainerColor = MaterialTheme.colorScheme.primary,
                     selectedLabelColor = MaterialTheme.colorScheme.onPrimary
                 )
             )
+        }
+
+        // 2b. Sensor Megapixel Resolution (12MP, 24MP, 48MP, 50MP, etc.)
+        val (sheetMpW, sheetMpH) = uiState.photoMegapixel.computeDimensions(uiState.aspectRatio)
+        Text(
+            text = "Sensor Megapixel Resolution (${uiState.photoMegapixel.label} • ${sheetMpW}×${sheetMpH})",
+            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.ExtraBold)
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            caps.supportedMegapixels.forEach { mp ->
+                FilterChip(
+                    selected = uiState.photoMegapixel == mp,
+                    onClick = { viewModel.setPhotoMegapixel(mp) },
+                    label = { Text(mp.label) },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = MaterialTheme.colorScheme.primary,
+                        selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                    )
+                )
+            }
+        }
+
+        // 2c. LOG & HDR Video Color Profile
+        Text(
+            text = "LOG & HDR Video Color Profile (${uiState.colorProfile.label})",
+            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.ExtraBold)
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            ColorProfileOption.entries.forEach { profile ->
+                FilterChip(
+                    selected = uiState.colorProfile == profile,
+                    onClick = { viewModel.setColorProfile(profile) },
+                    label = { Text(profile.label) },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = if (profile.isLog) GodcamAmberGold else MaterialTheme.colorScheme.primary,
+                        selectedLabelColor = if (profile.isLog) Color(0xFF141E1A) else MaterialTheme.colorScheme.onPrimary
+                    )
+                )
+            }
         }
 
         HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.45f))

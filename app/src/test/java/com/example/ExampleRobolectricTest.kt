@@ -48,16 +48,46 @@ class ExampleRobolectricTest {
         assertTrue(com.example.model.FocusModeOption.MACRO in com.example.model.FocusModeOption.entries)
         assertTrue(com.example.model.StabilizationMode.OPTICAL_OIS in com.example.model.StabilizationMode.entries)
 
-        // Verify 15 themes including Pastel themes
-        assertTrue(com.example.model.AppThemeOption.entries.size >= 15)
+        // Verify 26 themes including Pastel, Editorial, and Pro Dark themes
+        assertEquals(26, com.example.model.AppThemeOption.entries.size)
 
-        // Verify ColorMatrix calculation for Fuji Pro 400H
+        // Verify Megapixel Camera options (12 MP, 24 MP, 48 MP, 50 MP, 64 MP, 108 MP, 200 MP)
+        val mp50Dims = com.example.model.PhotoMegapixelOption.MP_50.computeDimensions(com.example.model.AspectRatioOption.RATIO_4_3)
+        assertEquals(8192 to 6144, mp50Dims)
+        val mp48Dims = com.example.model.PhotoMegapixelOption.MP_48.computeDimensions(com.example.model.AspectRatioOption.RATIO_4_3)
+        assertEquals(8000 to 6000, mp48Dims)
+        val mp12Dims = com.example.model.PhotoMegapixelOption.MP_12.computeDimensions(com.example.model.AspectRatioOption.RATIO_4_3)
+        assertEquals(4032 to 3024, mp12Dims)
+
+        // Verify LOG Video profiles (G-Log, Cinema D-Log M, S-Log3)
+        assertTrue(com.example.model.ColorProfileOption.FLAT_NATURAL.isLog)
+        assertTrue(com.example.model.ColorProfileOption.CINE_D_LOG.isLog)
+        assertTrue(com.example.model.ColorProfileOption.S_LOG3.isLog)
+
+        // Verify ColorMatrix calculation for Fuji Pro 400H + ProOpticalState (ISO, Shutter, WB Kelvin, LOG)
         val fuji = FilterCatalog.getById("fuji_pro_400h")
-        val matrix = ImageFilterEngine.buildFloatMatrix(fuji, EditRecipe(presetId = fuji.id, intensity = 0.8f))
+        val proOptical = com.example.model.ProOpticalState(
+            isAutoIso = false,
+            manualIso = 800,
+            isAutoShutter = false,
+            shutterDenominator = 60,
+            exposureEv = 0.5f,
+            whiteBalance = com.example.model.WhiteBalancePreset.MANUAL_KELVIN,
+            manualKelvin = 4200,
+            colorProfile = com.example.model.ColorProfileOption.CINE_D_LOG
+        )
+        val matrix = ImageFilterEngine.buildFloatMatrix(
+            preset = fuji,
+            recipe = EditRecipe(presetId = fuji.id, intensity = 0.8f),
+            extraEv = 0.5f,
+            proOptical = proOptical
+        )
         assertEquals(20, matrix.size)
 
-        // Verify runtime capability matrix filters valid FPS by resolution
+        // Verify runtime capability matrix supports 100x zoom and filters valid FPS by resolution
         val caps = HardwareCapabilities()
+        assertEquals(100.0f, caps.maxZoom)
+        assertTrue(100.0f in caps.zoomStops)
         val fps4K = caps.validFpsFor(VideoResolution.UHD_4K, VideoCodecOption.H264)
         assertTrue(VideoFps.FPS_60 in fps4K)
         assertTrue(VideoFps.FPS_240 !in fps4K)
